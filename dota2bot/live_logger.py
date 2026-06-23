@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import re
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -55,13 +57,17 @@ async def run_live_logger(
         last_seen_games: dict[str, dict[str, Any]] = {}
         last_state_hash_by_match: dict[str, str] = {}
         last_state_change_ns_by_match: dict[str, int] = {}
+        cycle = 0
         while True:
+            cycle += 1
+            cycle_id = f"C_{time.time_ns()}"
             if book_only:
                 games, map_nums = [], {}
             else:
                 games_task = asyncio.create_task(fetch_top_live_games(session))
                 map_nums_task = asyncio.create_task(fetch_live_league_map_numbers(session))
                 games, map_nums = await asyncio.gather(games_task, map_nums_task)
+            fetched_games = list(games)
 
             if discover_dota or discover_active:
                 gamma_markets = await fetch_active_gamma_markets(session)
@@ -86,6 +92,12 @@ async def run_live_logger(
                     # Clear stale book prices from previous map/game
                     latest_books.clear()
                     token_ids = []  # Reset until bound to a live game this cycle
+                fetched_game_count = len(games)
+                games, game_reject_rows = _filter_games_for_markets(games, markets, cycle_id)
+                for reject in game_reject_rows:
+                    logs.live_binding_rejects.append(reject)
+            else:
+                fetched_game_count = len(games)
 
             current_match_ids = {str(g.get("match_id")) for g in games if g.get("match_id")}
             ended_games = []
@@ -110,9 +122,21 @@ async def run_live_logger(
                 last_state_hash_by_match,
                 last_state_change_ns_by_match,
             )
+            health = _cycle_health_base(
+                cycle_id=cycle_id,
+                fetched_games=fetched_game_count,
+                fetched_game_rows=fetched_games,
+                games=games_to_process,
+                map_nums=map_nums,
+                markets=markets,
+                discover_dota=discover_dota,
+                discover_active=discover_active,
+            )
 
             if not markets.empty and (discover_dota or discover_active):
-                _bind_discovered_markets(markets, games_to_process, map_nums)
+                reject_rows = _bind_discovered_markets(markets, games_to_process, map_nums, cycle_id)
+                for reject in reject_rows:
+                    logs.live_binding_rejects.append(reject)
 
                 # Only fetch books for tokens we successfully bound to a live match
                 bound_markets = markets[markets["match_id"] != ""]
@@ -121,24 +145,33 @@ async def run_live_logger(
                     token_ids = token_ids[:max_tokens]
                 counters["tokens"] = len(token_ids)
                 counters["market_side_rows"] = int(len(markets))
+                health["bound_market_rows"] = int(len(bound_markets))
+                health["tokens"] = int(len(token_ids))
 
             for game in games_to_process:
                 logs.live_game_snapshots.append(game)
                 counters["game_rows"] += 1
 
             book_results = await asyncio.gather(*(fetch_clob_book(session, token) for token in token_ids))
+            cycle_book_rows = 0
             for book in book_results:
                 if not book:
                     continue
                 logs.live_book_ticks.append(book)
                 latest_books[str(book["asset_id"])] = book
                 counters["book_rows"] += 1
+                cycle_book_rows += 1
 
+            cycle_live_side_rows = 0
             for game in games_to_process:
                 for row in _side_rows_for_game(game, markets, latest_books):
                     logs.live_side_snapshots.append(row)
                     counters["live_side_rows"] += 1
+                    cycle_live_side_rows += 1
 
+            health["book_rows"] = cycle_book_rows
+            health["live_side_rows"] = cycle_live_side_rows
+            logs.live_health.append(health)
             logs.flush()
             if once:
                 return counters
@@ -216,6 +249,7 @@ def _side_rows_for_game(
                 "broadcast_delay_s": game.get("broadcast_delay_s"),
                 "source_last_update_utc": game.get("source_last_update_utc"),
                 "source_update_age_sec": game.get("source_update_age_sec"),
+                "source_clock_skew_sec": game.get("source_clock_skew_sec"),
                 "state_hash": game.get("state_hash"),
                 "state_changed": game.get("state_changed"),
                 "seconds_since_state_change": game.get("seconds_since_state_change"),
@@ -276,33 +310,131 @@ def _annotate_state_changes(
         game["seconds_since_state_change"] = (received_ns - last_change_ns) / 1_000_000_000.0
 
 
+def _cycle_health_base(
+    *,
+    cycle_id: str,
+    fetched_games: int,
+    fetched_game_rows: list[dict[str, Any]],
+    games: list[dict[str, Any]],
+    map_nums: dict[str, int],
+    markets: pd.DataFrame,
+    discover_dota: bool,
+    discover_active: bool,
+) -> dict[str, Any]:
+    now_ns = time.time_ns()
+    source_ages = [
+        float(game.get("source_update_age_sec"))
+        for game in games
+        if _num_or_none(game.get("source_update_age_sec")) is not None
+    ]
+    source_skews = [
+        float(game.get("source_clock_skew_sec"))
+        for game in games
+        if _num_or_none(game.get("source_clock_skew_sec")) is not None
+    ]
+    fetched_source_ages = [
+        float(game.get("source_update_age_sec"))
+        for game in fetched_game_rows
+        if _num_or_none(game.get("source_update_age_sec")) is not None
+    ]
+    fetched_source_skews = [
+        float(game.get("source_clock_skew_sec"))
+        for game in fetched_game_rows
+        if _num_or_none(game.get("source_clock_skew_sec")) is not None
+    ]
+    return {
+        "received_at_utc": _utc_from_ns(now_ns),
+        "received_at_ns": now_ns,
+        "cycle_id": cycle_id,
+        "fetched_games": fetched_games,
+        "irrelevant_games": max(fetched_games - len(games), 0),
+        "fetched_stale_games": sum(1 for age in fetched_source_ages if age > 30),
+        "fetched_clock_skew_games": sum(1 for skew in fetched_source_skews if skew > 0),
+        "max_fetched_source_update_age_sec": max(fetched_source_ages) if fetched_source_ages else None,
+        "max_fetched_source_clock_skew_sec": max(fetched_source_skews) if fetched_source_skews else None,
+        "games": len(games),
+        "games_with_team_names": sum(1 for game in games if game.get("radiant_team") and game.get("dire_team")),
+        "map_numbers": len(map_nums),
+        "market_side_rows": int(len(markets)),
+        "bound_market_rows": 0,
+        "tokens": 0,
+        "book_rows": 0,
+        "live_side_rows": 0,
+        "stale_games": sum(1 for age in source_ages if age > 30),
+        "clock_skew_games": sum(1 for skew in source_skews if skew > 0),
+        "max_source_update_age_sec": max(source_ages) if source_ages else None,
+        "max_source_clock_skew_sec": max(source_skews) if source_skews else None,
+        "discover_dota": int(discover_dota),
+        "discover_active": int(discover_active),
+    }
+
+
+def _filter_games_for_markets(
+    games: list[dict[str, Any]],
+    markets: pd.DataFrame,
+    cycle_id: str | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if markets.empty:
+        return [], [_game_reject_row(game, "no_active_markets", cycle_id) for game in games]
+    kept = []
+    rejects = []
+    for game in games:
+        if not str(game.get("radiant_team") or "").strip() or not str(game.get("dire_team") or "").strip():
+            rejects.append(_game_reject_row(game, "missing_team_names", cycle_id))
+        elif _game_matches_any_market(game, markets):
+            kept.append(game)
+        else:
+            rejects.append(_game_reject_row(game, "not_polymarket_match", cycle_id))
+    return kept, rejects
+
+
+def _game_matches_any_market(game: dict[str, Any], markets: pd.DataFrame) -> bool:
+    match_id = str(game.get("match_id") or "")
+    radiant = str(game.get("radiant_team") or "").strip()
+    dire = str(game.get("dire_team") or "").strip()
+    if not match_id or not radiant or not dire:
+        return False
+    for _, row in markets.iterrows():
+        name = str(row.get("market_name", ""))
+        if _team_match(radiant, name) and _team_match(dire, name):
+            return True
+    return False
+
+
 def _bind_discovered_markets(
     markets: pd.DataFrame,
     games: list[dict[str, Any]],
     map_nums: dict[str, int],
-) -> None:
+    cycle_id: str | None = None,
+) -> list[dict[str, Any]]:
+    rejects: list[dict[str, Any]] = []
     for game in games:
         match_id = str(game.get("match_id") or "")
         rad = str(game.get("radiant_team") or "").strip().lower()
         dire = str(game.get("dire_team") or "").strip().lower()
         if not match_id or not rad or not dire:
             continue
+        matched_any_market = False
         for idx, row in markets.iterrows():
             name = str(row.get("market_name", ""))
             if not (_team_match(game.get("radiant_team", ""), name) and _team_match(game.get("dire_team", ""), name)):
                 continue
+            matched_any_market = True
 
             map_num = map_nums.get(match_id)
             if not map_num:
+                rejects.append(_binding_reject_row(row, game, "no_map_number", None, cycle_id))
                 continue
             m = re.search(r"(?:map|game)\s*(\d+)", name, re.IGNORECASE)
             if not m:
                 # Game 3 of a BO3: Match Winner == Game 3 winner, so allow it.
                 if map_num != 3:
+                    rejects.append(_binding_reject_row(row, game, "series_market_without_game3", map_num, cycle_id))
                     continue
             else:
                 target_map = int(m.group(1))
                 if target_map != map_num:
+                    rejects.append(_binding_reject_row(row, game, "wrong_game_number", map_num, cycle_id))
                     continue
 
             markets.at[idx, "match_id"] = match_id
@@ -314,6 +446,55 @@ def _bind_discovered_markets(
             markets.at[idx, "yes_is_radiant"] = mapping["yes_is_radiant"]
             markets.at[idx, "steam_side_mapping"] = mapping["steam_side_mapping"]
             markets.at[idx, "confidence"] = mapping["confidence"]
+        if not matched_any_market:
+            rejects.append(_game_reject_row(game, "no_matching_market", cycle_id))
+    return rejects
+
+
+def _binding_reject_row(
+    market: pd.Series | dict[str, Any],
+    game: dict[str, Any],
+    reason: str,
+    map_num: int | None,
+    cycle_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "received_at_utc": game.get("received_at_utc"),
+        "received_at_ns": game.get("received_at_ns"),
+        "cycle_id": cycle_id,
+        "match_id": game.get("match_id"),
+        "market_id": _get(market, "market_id"),
+        "market_name": _get(market, "market_name"),
+        "side": _get(market, "side"),
+        "token_id": _get(market, "token_id"),
+        "radiant_team": game.get("radiant_team"),
+        "dire_team": game.get("dire_team"),
+        "reason": reason,
+        "current_game_number": str(map_num) if map_num else None,
+        "map_number_available": map_num is not None,
+        "source_update_age_sec": game.get("source_update_age_sec"),
+        "source_clock_skew_sec": game.get("source_clock_skew_sec"),
+    }
+
+
+def _game_reject_row(game: dict[str, Any], reason: str, cycle_id: str | None) -> dict[str, Any]:
+    return {
+        "received_at_utc": game.get("received_at_utc"),
+        "received_at_ns": game.get("received_at_ns"),
+        "cycle_id": cycle_id,
+        "match_id": game.get("match_id"),
+        "market_id": None,
+        "market_name": None,
+        "side": None,
+        "token_id": None,
+        "radiant_team": game.get("radiant_team"),
+        "dire_team": game.get("dire_team"),
+        "reason": reason,
+        "current_game_number": None,
+        "map_number_available": False,
+        "source_update_age_sec": game.get("source_update_age_sec"),
+        "source_clock_skew_sec": game.get("source_clock_skew_sec"),
+    }
 
 
 def _side_is_radiant(market: dict[str, Any]) -> bool | None:
@@ -334,6 +515,19 @@ def _side_is_radiant(market: dict[str, Any]) -> bool | None:
     if side == "NO" or (no_token_id and token_id == no_token_id):
         return not yes_is_radiant
     return None
+
+
+def _utc_from_ns(ns: int) -> str:
+    return datetime.fromtimestamp(ns / 1_000_000_000, tz=timezone.utc).isoformat()
+
+
+def _num_or_none(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _infer_market_side_mapping(market: pd.Series | dict[str, Any], game: dict[str, Any]) -> dict[str, Any]:

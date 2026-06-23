@@ -226,11 +226,16 @@ def normalize_top_live_game(raw: dict[str, Any], received_at_ns: int) -> dict[st
     radiant_lead = _int_or_none(raw.get("radiant_lead"))
     source_last_update = _float_or_none(raw.get("last_update_time"))
     source_update_age_sec = None
+    source_clock_skew_sec = None
     source_last_update_utc = None
     if source_last_update is not None:
-        source_update_age_sec = received_at_ns / 1_000_000_000.0 - source_last_update
+        signed_age_sec = received_at_ns / 1_000_000_000.0 - source_last_update
+        source_update_age_sec = max(signed_age_sec, 0.0)
+        source_clock_skew_sec = max(-signed_age_sec, 0.0)
         source_last_update_utc = utc_from_epoch_seconds(source_last_update)
     broadcast_delay_s = _int_or_none(raw.get("delay"))
+    deactivate_time = _float_or_none(raw.get("deactivate_time"))
+    received_at_sec = received_at_ns / 1_000_000_000.0
     return {
         "received_at_utc": utc_from_ns(received_at_ns),
         "received_at_ns": received_at_ns,
@@ -248,9 +253,10 @@ def normalize_top_live_game(raw: dict[str, Any], received_at_ns: int) -> dict[st
         "broadcast_delay_s": broadcast_delay_s,
         "source_last_update_utc": source_last_update_utc,
         "source_update_age_sec": source_update_age_sec,
+        "source_clock_skew_sec": source_clock_skew_sec,
         "data_source": "steam_top_live",
         "spectators": _int_or_none(raw.get("spectators")),
-        "game_over": bool(_int_or_none(raw.get("deactivate_time")) or 0),
+        "game_over": bool(deactivate_time and deactivate_time <= received_at_sec),
         "radiant_team": raw.get("team_name_radiant"),
         "dire_team": raw.get("team_name_dire"),
         "radiant_team_id": str(raw.get("team_id_radiant") or ""),

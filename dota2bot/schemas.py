@@ -56,6 +56,7 @@ SIDE_SNAPSHOT_COLUMNS = [
     "broadcast_delay_s",
     "source_last_update_utc",
     "source_update_age_sec",
+    "source_clock_skew_sec",
     "state_hash",
     "state_changed",
     "seconds_since_state_change",
@@ -123,6 +124,12 @@ LIVE_HEALTH_COLUMNS = [
     "received_at_utc",
     "received_at_ns",
     "cycle_id",
+    "fetched_games",
+    "irrelevant_games",
+    "fetched_stale_games",
+    "fetched_clock_skew_games",
+    "max_fetched_source_update_age_sec",
+    "max_fetched_source_clock_skew_sec",
     "games",
     "games_with_team_names",
     "map_numbers",
@@ -134,6 +141,7 @@ LIVE_HEALTH_COLUMNS = [
     "stale_games",
     "clock_skew_games",
     "max_source_update_age_sec",
+    "max_source_clock_skew_sec",
     "discover_dota",
     "discover_active",
 ]
@@ -154,6 +162,7 @@ LIVE_BINDING_REJECT_COLUMNS = [
     "current_game_number",
     "map_number_available",
     "source_update_age_sec",
+    "source_clock_skew_sec",
 ]
 
 
@@ -174,6 +183,7 @@ LIVE_GAME_COLUMNS = [
     "broadcast_delay_s",
     "source_last_update_utc",
     "source_update_age_sec",
+    "source_clock_skew_sec",
     "state_hash",
     "state_changed",
     "seconds_since_state_change",
