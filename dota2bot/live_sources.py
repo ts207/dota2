@@ -17,6 +17,8 @@ import aiohttp
 CLOB_BOOK_URL = "https://clob.polymarket.com/book"
 GAMMA_MARKETS_URL = "https://gamma-api.polymarket.com/markets"
 TOP_LIVE_URL = "https://api.steampowered.com/IDOTA2Match_570/GetTopLiveGame/v1/"
+MATCH_DETAILS_URL = "https://api.steampowered.com/IDOTA2Match_570/GetMatchDetails/v1/"
+OPENDOTA_MATCH_URL = "https://api.opendota.com/api/matches/{match_id}"
 
 
 def utc_from_ns(ns: int) -> str:
@@ -128,6 +130,120 @@ async def fetch_live_league_map_numbers(session: aiohttp.ClientSession, steam_ap
             d_wins = int(raw.get("dire_series_wins") or 0)
             out[match_id] = r_wins + d_wins + 1
     return out
+
+
+async def fetch_match_outcome(
+    session: aiohttp.ClientSession,
+    match_id: str,
+    steam_api_key: str | None = None,
+) -> dict[str, Any]:
+    """Fetch final radiant_win for a completed match.
+
+    Returns status=pending when neither source has a final winner yet.
+    """
+    steam = await fetch_steam_match_outcome(session, match_id, steam_api_key=steam_api_key)
+    if steam.get("status") == "settled":
+        return steam
+    opendota = await fetch_opendota_match_outcome(session, match_id)
+    if opendota.get("status") == "settled":
+        return opendota
+    return {
+        "match_id": str(match_id),
+        "radiant_win": None,
+        "outcome_source": None,
+        "status": "pending",
+        "error": steam.get("error") or opendota.get("error"),
+    }
+
+
+async def fetch_steam_match_outcome(
+    session: aiohttp.ClientSession,
+    match_id: str,
+    steam_api_key: str | None = None,
+) -> dict[str, Any]:
+    key = steam_api_key or os.environ.get("STEAM_API_KEY")
+    if not key:
+        return {"match_id": str(match_id), "radiant_win": None, "outcome_source": "steam_match_details", "status": "missing_key"}
+    try:
+        async with session.get(
+            MATCH_DETAILS_URL,
+            params={"key": key, "match_id": match_id},
+            timeout=aiohttp.ClientTimeout(total=8.0),
+        ) as resp:
+            if resp.status != 200:
+                return {
+                    "match_id": str(match_id),
+                    "radiant_win": None,
+                    "outcome_source": "steam_match_details",
+                    "status": "pending",
+                    "error": f"http_{resp.status}",
+                }
+            payload = await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return {
+            "match_id": str(match_id),
+            "radiant_win": None,
+            "outcome_source": "steam_match_details",
+            "status": "pending",
+            "error": type(exc).__name__,
+        }
+
+    result = payload.get("result") or {}
+    if isinstance(result.get("radiant_win"), bool):
+        return {
+            "match_id": str(match_id),
+            "radiant_win": bool(result["radiant_win"]),
+            "outcome_source": "steam_match_details",
+            "status": "settled",
+            "error": None,
+        }
+    return {
+        "match_id": str(match_id),
+        "radiant_win": None,
+        "outcome_source": "steam_match_details",
+        "status": "pending",
+        "error": str(result.get("error") or ""),
+    }
+
+
+async def fetch_opendota_match_outcome(session: aiohttp.ClientSession, match_id: str) -> dict[str, Any]:
+    try:
+        async with session.get(
+            OPENDOTA_MATCH_URL.format(match_id=match_id),
+            timeout=aiohttp.ClientTimeout(total=8.0),
+        ) as resp:
+            if resp.status != 200:
+                return {
+                    "match_id": str(match_id),
+                    "radiant_win": None,
+                    "outcome_source": "opendota",
+                    "status": "pending",
+                    "error": f"http_{resp.status}",
+                }
+            payload = await resp.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, json.JSONDecodeError) as exc:
+        return {
+            "match_id": str(match_id),
+            "radiant_win": None,
+            "outcome_source": "opendota",
+            "status": "pending",
+            "error": type(exc).__name__,
+        }
+    if isinstance(payload.get("radiant_win"), bool):
+        return {
+            "match_id": str(match_id),
+            "radiant_win": bool(payload["radiant_win"]),
+            "outcome_source": "opendota",
+            "status": "settled",
+            "error": None,
+        }
+    return {
+        "match_id": str(match_id),
+        "radiant_win": None,
+        "outcome_source": "opendota",
+        "status": "pending",
+        "error": "",
+    }
 
 
 async def fetch_active_gamma_markets(session: aiohttp.ClientSession, limit: int = 1000) -> list[dict[str, Any]]:

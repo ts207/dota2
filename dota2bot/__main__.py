@@ -5,9 +5,11 @@ import json
 import os
 from pathlib import Path
 
+from .audit_logs import add_audit_args, run_audit_logs
 from .datasets import extract_datasets
 from .live_logger import add_live_args, run_live_logger
 from .replay_bot import run_replay
+from .settle_live import add_settle_args, run_settle_live, run_settle_live_loop
 
 
 def load_env_file(path: Path) -> None:
@@ -39,6 +41,12 @@ def main() -> None:
     live = sub.add_parser("live-log", help="log live Polymarket books and optional Steam TopLive state")
     add_live_args(live)
 
+    audit = sub.add_parser("audit-logs", help="summarize live parquet log quality")
+    add_audit_args(audit)
+
+    settle = sub.add_parser("settle-live", help="join final match outcomes into live side snapshots")
+    add_settle_args(settle)
+
     args = parser.parse_args()
     if args.command == "extract":
         print(json.dumps(extract_datasets(), indent=2, sort_keys=True))
@@ -61,6 +69,36 @@ def main() -> None:
             )
         )
         print(json.dumps(result, indent=2, sort_keys=True))
+    elif args.command == "audit-logs":
+        print(
+            run_audit_logs(
+                logs_root=Path(args.logs_root),
+                market_scope=args.market_scope,
+                output_format=args.format,
+            )
+        )
+    elif args.command == "settle-live":
+        if args.loop:
+            run_settle_live_loop(
+                logs_root=Path(args.logs_root),
+                output_name=args.output_name,
+                outcomes_name=args.outcomes_name,
+                concurrency=args.concurrency,
+                interval_sec=args.interval_sec,
+            )
+            return
+        print(
+            json.dumps(
+                run_settle_live(
+                    logs_root=Path(args.logs_root),
+                    output_name=args.output_name,
+                    outcomes_name=args.outcomes_name,
+                    concurrency=args.concurrency,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
 
 
 if __name__ == "__main__":
