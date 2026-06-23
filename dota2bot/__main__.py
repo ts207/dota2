@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from .datasets import extract_datasets
@@ -9,7 +10,23 @@ from .live_logger import add_live_args, run_live_logger
 from .replay_bot import run_replay
 
 
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def main() -> None:
+    load_env_file(Path(".env"))
+
     parser = argparse.ArgumentParser(prog="dota2bot")
     sub = parser.add_subparsers(dest="command", required=True)
 

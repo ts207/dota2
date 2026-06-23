@@ -17,9 +17,9 @@ def run_replay(limit: int | None = None, logs_root: Path = Path("logs")) -> dict
     if limit:
         df = df.head(limit)
 
-    missing = [col for col in SIDE_SNAPSHOT_COLUMNS if col not in df.columns]
-    if missing:
-        raise ValueError(f"clean dataset missing required columns: {missing}")
+    for col in SIDE_SNAPSHOT_COLUMNS:
+        if col not in df.columns:
+            df[col] = None
 
     logs = BotLogs(root=logs_root)
     strategy = LeaderMidgameProbe()

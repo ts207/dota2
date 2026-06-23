@@ -8,7 +8,7 @@ from typing import Iterable, Mapping
 
 import pandas as pd
 
-from .schemas import DECISION_COLUMNS, LIVE_BOOK_COLUMNS, LIVE_GAME_COLUMNS, SIDE_SNAPSHOT_COLUMNS
+from .schemas import DECISION_COLUMNS, LIVE_BINDING_REJECT_COLUMNS, LIVE_BOOK_COLUMNS, LIVE_GAME_COLUMNS, LIVE_HEALTH_COLUMNS, SIDE_SNAPSHOT_COLUMNS
 
 
 class ParquetAppendLog:
@@ -75,6 +75,18 @@ class BotLogs:
             columns=SIDE_SNAPSHOT_COLUMNS,
             batch_rows=batch_rows,
         )
+        self.live_health = ParquetAppendLog(
+            root=root,
+            name="live_health",
+            columns=LIVE_HEALTH_COLUMNS,
+            batch_rows=batch_rows,
+        )
+        self.live_binding_rejects = ParquetAppendLog(
+            root=root,
+            name="live_binding_rejects",
+            columns=LIVE_BINDING_REJECT_COLUMNS,
+            batch_rows=batch_rows,
+        )
 
     def flush(self) -> None:
         self.side_snapshots.flush()
@@ -82,3 +94,5 @@ class BotLogs:
         self.live_book_ticks.flush()
         self.live_game_snapshots.flush()
         self.live_side_snapshots.flush()
+        self.live_health.flush()
+        self.live_binding_rejects.flush()

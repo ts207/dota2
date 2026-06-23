@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import time
@@ -20,6 +21,10 @@ TOP_LIVE_URL = "https://api.steampowered.com/IDOTA2Match_570/GetTopLiveGame/v1/"
 
 def utc_from_ns(ns: int) -> str:
     return datetime.fromtimestamp(ns / 1_000_000_000, tz=timezone.utc).isoformat()
+
+
+def utc_from_epoch_seconds(seconds: float) -> str:
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
 
 
 async def fetch_clob_book(
@@ -185,6 +190,8 @@ def gamma_market_token_rows(markets: list[dict[str, Any]]) -> list[dict[str, Any
         outcomes = _json_list(market.get("outcomes"))
         if len(token_ids) < 2:
             continue
+        yes_team = str(outcomes[0]) if len(outcomes) >= 1 else "Yes"
+        no_team = str(outcomes[1]) if len(outcomes) >= 2 else "No"
         for idx, token_id in enumerate(token_ids[:2]):
             outcome = str(outcomes[idx]) if idx < len(outcomes) else ("Yes" if idx == 0 else "No")
             opposing_id = str(token_ids[1] if idx == 0 else token_ids[0]) if len(token_ids) >= 2 else ""
@@ -201,6 +208,8 @@ def gamma_market_token_rows(markets: list[dict[str, Any]]) -> list[dict[str, Any
                     "opposing_token_id": opposing_id,
                     "yes_token_id": yes_token_id,
                     "no_token_id": no_token_id,
+                    "yes_team": yes_team,
+                    "no_team": no_team,
                     "side": outcome.upper(),
                     "active": bool(market.get("active")),
                     "closed": bool(market.get("closed")),
@@ -215,6 +224,13 @@ def gamma_market_token_rows(markets: list[dict[str, Any]]) -> list[dict[str, Any
 
 def normalize_top_live_game(raw: dict[str, Any], received_at_ns: int) -> dict[str, Any]:
     radiant_lead = _int_or_none(raw.get("radiant_lead"))
+    source_last_update = _float_or_none(raw.get("last_update_time"))
+    source_update_age_sec = None
+    source_last_update_utc = None
+    if source_last_update is not None:
+        source_update_age_sec = received_at_ns / 1_000_000_000.0 - source_last_update
+        source_last_update_utc = utc_from_epoch_seconds(source_last_update)
+    broadcast_delay_s = _int_or_none(raw.get("delay"))
     return {
         "received_at_utc": utc_from_ns(received_at_ns),
         "received_at_ns": received_at_ns,
@@ -228,8 +244,10 @@ def normalize_top_live_game(raw: dict[str, Any], received_at_ns: int) -> dict[st
         "dire_score": _int_or_none(raw.get("dire_score")),
         "building_state": _int_or_none(raw.get("building_state")),
         "tower_state": None,
-        "stream_delay_s": _int_or_none(raw.get("delay")),
-        "source_update_age_sec": None,
+        "stream_delay_s": broadcast_delay_s,
+        "broadcast_delay_s": broadcast_delay_s,
+        "source_last_update_utc": source_last_update_utc,
+        "source_update_age_sec": source_update_age_sec,
         "data_source": "steam_top_live",
         "spectators": _int_or_none(raw.get("spectators")),
         "game_over": bool(_int_or_none(raw.get("deactivate_time")) or 0),
@@ -240,6 +258,9 @@ def normalize_top_live_game(raw: dict[str, Any], received_at_ns: int) -> dict[st
         "radiant_net_worth": None,
         "dire_net_worth": None,
         "net_worth_diff": radiant_lead,
+        "state_hash": _state_hash(raw),
+        "state_changed": None,
+        "seconds_since_state_change": None,
         "raw_json": json.dumps(raw, separators=(",", ":"), sort_keys=True),
     }
 
@@ -274,6 +295,32 @@ def _int_or_none(value: Any) -> int | None:
         return int(float(value))
     except (TypeError, ValueError):
         return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value in (None, ""):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _state_hash(raw: dict[str, Any]) -> str:
+    state = {
+        key: raw.get(key)
+        for key in [
+            "match_id",
+            "game_time",
+            "radiant_lead",
+            "radiant_score",
+            "dire_score",
+            "building_state",
+            "deactivate_time",
+        ]
+    }
+    encoded = json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha1(encoded).hexdigest()
 
 
 def _json_list(value: Any) -> list[Any]:

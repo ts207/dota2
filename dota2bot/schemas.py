@@ -53,7 +53,12 @@ SIDE_SNAPSHOT_COLUMNS = [
     "tower_state",
     "roshan_respawn_timer",
     "stream_delay_s",
+    "broadcast_delay_s",
+    "source_last_update_utc",
     "source_update_age_sec",
+    "state_hash",
+    "state_changed",
+    "seconds_since_state_change",
     "data_source",
     "spectators",
     "game_over",
@@ -114,6 +119,44 @@ LIVE_BOOK_COLUMNS = [
 ]
 
 
+LIVE_HEALTH_COLUMNS = [
+    "received_at_utc",
+    "received_at_ns",
+    "cycle_id",
+    "games",
+    "games_with_team_names",
+    "map_numbers",
+    "market_side_rows",
+    "bound_market_rows",
+    "tokens",
+    "book_rows",
+    "live_side_rows",
+    "stale_games",
+    "clock_skew_games",
+    "max_source_update_age_sec",
+    "discover_dota",
+    "discover_active",
+]
+
+
+LIVE_BINDING_REJECT_COLUMNS = [
+    "received_at_utc",
+    "received_at_ns",
+    "cycle_id",
+    "match_id",
+    "market_id",
+    "market_name",
+    "side",
+    "token_id",
+    "radiant_team",
+    "dire_team",
+    "reason",
+    "current_game_number",
+    "map_number_available",
+    "source_update_age_sec",
+]
+
+
 LIVE_GAME_COLUMNS = [
     "received_at_utc",
     "received_at_ns",
@@ -128,7 +171,12 @@ LIVE_GAME_COLUMNS = [
     "building_state",
     "tower_state",
     "stream_delay_s",
+    "broadcast_delay_s",
+    "source_last_update_utc",
     "source_update_age_sec",
+    "state_hash",
+    "state_changed",
+    "seconds_since_state_change",
     "data_source",
     "spectators",
     "game_over",

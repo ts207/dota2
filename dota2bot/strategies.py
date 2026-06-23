@@ -36,10 +36,11 @@ class LeaderMidgameProbe:
         radiant_lead = _num(row.get("radiant_lead") or row.get("net_worth_diff"))
         radiant_score = _num(row.get("radiant_score"))
         dire_score = _num(row.get("dire_score"))
-        side_is_radiant = bool(row.get("side_is_radiant"))
-
         if game_time is None or radiant_lead is None:
             return Decision(False, "missing_state", 0.0)
+        side_is_radiant = _bool_or_none(row.get("side_is_radiant"))
+        if side_is_radiant is None:
+            return Decision(False, "missing_side_mapping", 0.0)
         if not (self.min_game_time_sec <= game_time <= self.max_game_time_sec):
             return Decision(False, "outside_time_window", 0.0)
 
@@ -76,3 +77,19 @@ def _num(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    return None

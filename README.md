@@ -15,7 +15,10 @@ nearest executable book, and settlement fields when known.
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
+cp .env.example .env
 ```
+
+Set `STEAM_API_KEY` in `.env` before running live logging.
 
 ## Extract Datasets
 
