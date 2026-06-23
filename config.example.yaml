@@ -1,0 +1,16 @@
+data:
+  clean_zip: clean_executable_backtest_dataset_20260623.zip
+  pattern_zip: pattern_discovery_dataset_20260623.zip
+  dataset_dir: datasets
+
+logging:
+  root: logs
+  batch_rows: 5000
+
+strategy:
+  name: leader_midgame_probe
+  min_game_time_sec: 900
+  max_game_time_sec: 2200
+  min_abs_net_worth_lead: 6000
+  min_abs_score_margin: 3
+  min_edge_hint: 0.0
