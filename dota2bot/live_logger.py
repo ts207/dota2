@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
 import aiohttp
 import pandas as pd
 
-from .live_sources import fetch_active_gamma_markets, fetch_clob_book, fetch_top_live_games, filter_dota_gamma_markets, gamma_market_token_rows
+from .live_sources import fetch_active_gamma_markets, fetch_clob_book, fetch_live_league_map_numbers, fetch_top_live_games, filter_dota_gamma_markets, gamma_market_token_rows
 from .logging_store import BotLogs
 from .market_state import load_market_sides, token_ids_from_markets
 from .schemas import SIDE_SNAPSHOT_COLUMNS
@@ -51,8 +52,14 @@ async def run_live_logger(
             token_ids = []
 
         latest_books: dict[str, dict[str, Any]] = {}
+        last_seen_games: dict[str, dict[str, Any]] = {}
         while True:
-            games = [] if book_only else await fetch_top_live_games(session)
+            if book_only:
+                games, map_nums = [], {}
+            else:
+                games_task = asyncio.create_task(fetch_top_live_games(session))
+                map_nums_task = asyncio.create_task(fetch_live_league_map_numbers(session))
+                games, map_nums = await asyncio.gather(games_task, map_nums_task)
 
             if discover_dota or discover_active:
                 gamma_markets = await fetch_active_gamma_markets(session)
@@ -69,29 +76,65 @@ async def run_live_logger(
                     markets["yes_team"] = ""
                     markets["no_team"] = ""
                     markets["yes_is_radiant"] = None
-                    markets["opposing_token_id"] = ""
+                    # Clear stale book prices from previous map/game
+                    latest_books.clear()
+                    token_ids = []  # Reset until bound to a live game this cycle
 
-                    for game in games:
-                        match_id = str(game.get("match_id") or "")
-                        rad = str(game.get("radiant_team") or "").strip().lower()
-                        dire = str(game.get("dire_team") or "").strip().lower()
-                        if not match_id or not rad or not dire:
-                            continue
-                        
-                        for idx, row in markets.iterrows():
-                            name = str(row.get("market_name", "")).lower()
-                            if rad in name and dire in name:
-                                markets.at[idx, "match_id"] = match_id
-                                markets.at[idx, "steam_radiant_team"] = game.get("radiant_team")
-                                markets.at[idx, "steam_dire_team"] = game.get("dire_team")
+            current_match_ids = {str(g.get("match_id")) for g in games if g.get("match_id")}
+            ended_games = []
+            if games:
+                for m_id, old_game in last_seen_games.items():
+                    if m_id not in current_match_ids:
+                        old_game_copy = dict(old_game)
+                        old_game_copy["game_over"] = True
+                        ended_games.append(old_game_copy)
+                for game in games:
+                    m_id = str(game.get("match_id") or "")
+                    if m_id:
+                        last_seen_games[m_id] = game
+                for eg in ended_games:
+                    m_id = str(eg.get("match_id") or "")
+                    if m_id in last_seen_games:
+                        del last_seen_games[m_id]
+            
+            games_to_process = games + ended_games
 
-                    token_ids = sorted(set(markets["token_id"].dropna().astype(str)))
+            if not markets.empty and (discover_dota or discover_active):
+                for game in games_to_process:
+                    match_id = str(game.get("match_id") or "")
+                    rad = str(game.get("radiant_team") or "").strip().lower()
+                    dire = str(game.get("dire_team") or "").strip().lower()
+                    if not match_id or not rad or not dire:
+                        continue
+                    for idx, row in markets.iterrows():
+                        name = str(row.get("market_name", ""))
+                        if _team_match(game.get("radiant_team", ""), name) and _team_match(game.get("dire_team", ""), name):
+                            map_num = map_nums.get(match_id)
+                            m = re.search(r'(?:map|game)\s*(\d+)', name, re.IGNORECASE)
+                            if map_num:
+                                if not m:
+                                    # Game 3 of a BO3: Match Winner == Game 3 winner, so allow it
+                                    if map_num != 3:
+                                        continue
+                                else:
+                                    target_map = int(m.group(1))
+                                    if target_map != map_num:
+                                        continue
+
+                            markets.at[idx, "match_id"] = match_id
+                            markets.at[idx, "steam_radiant_team"] = game.get("radiant_team")
+                            markets.at[idx, "steam_dire_team"] = game.get("dire_team")
+                            markets.at[idx, "current_game_number"] = str(map_num) if map_num else ""
+
+                    # Only fetch books for tokens we successfully bound to a live match
+                    bound_markets = markets[markets["match_id"] != ""]
+                    token_ids = sorted(set(bound_markets["token_id"].astype(str))) if not bound_markets.empty else []
                 if max_tokens:
                     token_ids = token_ids[:max_tokens]
                 counters["tokens"] = len(token_ids)
                 counters["market_side_rows"] = int(len(markets))
 
-            for game in games:
+            for game in games_to_process:
                 logs.live_game_snapshots.append(game)
                 counters["game_rows"] += 1
 
@@ -103,7 +146,7 @@ async def run_live_logger(
                 latest_books[str(book["asset_id"])] = book
                 counters["book_rows"] += 1
 
-            for game in games:
+            for game in games_to_process:
                 for row in _side_rows_for_game(game, markets, latest_books):
                     logs.live_side_snapshots.append(row)
                     counters["live_side_rows"] += 1
@@ -119,6 +162,8 @@ def _side_rows_for_game(
     markets: pd.DataFrame,
     latest_books: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    if markets.empty or "match_id" not in markets.columns:
+        return []
     match_id = str(game.get("match_id") or "")
     if not match_id:
         return []
@@ -159,7 +204,7 @@ def _side_rows_for_game(
                 "book_spread": book.get("spread"),
                 "settled_win": None,
                 "radiant_win": None,
-                "side_is_radiant": None,
+                "side_is_radiant": (market.get("yes_is_radiant") if market.get("side") == "YES" else not market.get("yes_is_radiant")) if market.get("yes_is_radiant") is not None else None,
                 "yes_is_radiant": market.get("yes_is_radiant"),
                 "radiant_lead": game.get("radiant_lead"),
                 "radiant_score": game.get("radiant_score"),
@@ -201,8 +246,9 @@ def _side_rows_for_game(
 
 
 def _age_ms(left_ns: Any, right_ns: Any) -> float | None:
+    """How many ms after the game snapshot was the book received. Positive = book is newer."""
     try:
-        return (int(left_ns) - int(right_ns)) / 1_000_000.0
+        return (int(right_ns) - int(left_ns)) / 1_000_000.0
     except (TypeError, ValueError):
         return None
 
@@ -216,3 +262,27 @@ def add_live_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-tokens", type=int, default=None)
     parser.add_argument("--discover-dota", action="store_true", help="discover current active Dota markets from Polymarket Gamma")
     parser.add_argument("--discover-active", action="store_true", help="discover current active Polymarket markets from Gamma")
+
+
+def _team_match(steam_name: str, market_name: str) -> bool:
+    stopwords = {"gaming", "esports", "team", "club", "clan", "ex", "fc", "the",
+                 "back", "new", "old", "red", "blue", "black", "white"}
+
+    steam_tokens = [w for w in re.findall(r"[a-z0-9]+", steam_name.lower()) if w not in stopwords]
+    market_tokens = set(re.findall(r"[a-z0-9]+", market_name.lower()))
+
+    if not steam_tokens:
+        steam_tokens = re.findall(r"[a-z0-9]+", steam_name.lower())
+
+    if len(steam_tokens) > 1:
+        acronym = "".join(t[0] for t in steam_tokens)
+        steam_tokens.append(acronym)
+
+    for t in steam_tokens:
+        if t in market_tokens:
+            return True
+        # Only allow steam token as substring of a market word, not the reverse
+        if len(t) >= 4 and any(t in mt for mt in market_tokens):
+            return True
+
+    return False

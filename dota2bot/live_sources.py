@@ -86,27 +86,80 @@ async def fetch_top_live_games(session: aiohttp.ClientSession, steam_api_key: st
             return
         for raw in payload.get("game_list", []) or []:
             row = normalize_top_live_game(raw, received_at_ns)
-            if row["match_id"]:
-                out.setdefault(row["match_id"], row)
+            mid = row["match_id"]
+            if not mid:
+                continue
+            # Partner 0 is canonical — always wins; others only fill gaps
+            if partner == 0 or mid not in out:
+                out[mid] = row
 
     await asyncio.gather(*(fetch_partner(p) for p in range(4)))
     return list(out.values())
 
 
-async def fetch_active_gamma_markets(session: aiohttp.ClientSession, limit: int = 500) -> list[dict[str, Any]]:
+async def fetch_live_league_map_numbers(session: aiohttp.ClientSession, steam_api_key: str | None = None) -> dict[str, int]:
+    key = steam_api_key or os.environ.get("STEAM_API_KEY")
+    if not key:
+        return {}
+    
+    url = "https://api.steampowered.com/IDOTA2Match_570/GetLiveLeagueGames/v1/"
     try:
         async with session.get(
-            GAMMA_MARKETS_URL,
-            params={"active": "true", "closed": "false", "limit": str(limit)},
-            headers={"Accept-Encoding": "gzip, deflate"},
-            timeout=aiohttp.ClientTimeout(total=10.0),
+            url,
+            params={"key": key},
+            timeout=aiohttp.ClientTimeout(total=6.0),
         ) as resp:
             if resp.status != 200:
-                return []
-            data = await resp.json()
+                return {}
+            payload = await resp.json()
     except (aiohttp.ClientError, asyncio.TimeoutError, OSError, json.JSONDecodeError):
-        return []
-    return data if isinstance(data, list) else []
+        return {}
+        
+    out = {}
+    for raw in payload.get("result", {}).get("games", []):
+        match_id = str(raw.get("match_id") or "")
+        if match_id:
+            r_wins = int(raw.get("radiant_series_wins") or 0)
+            d_wins = int(raw.get("dire_series_wins") or 0)
+            out[match_id] = r_wins + d_wins + 1
+    return out
+
+
+async def fetch_active_gamma_markets(session: aiohttp.ClientSession, limit: int = 1000) -> list[dict[str, Any]]:
+    urls_params = [
+        {"active": "true", "closed": "false", "limit": str(limit)},
+        {"active": "true", "closed": "false", "limit": str(limit), "series_slug": "dota-2"},
+    ]
+    seen_event_ids: set[str] = set()
+    events: list[dict[str, Any]] = []
+    for params in urls_params:
+        try:
+            async with session.get(
+                "https://gamma-api.polymarket.com/events",
+                params=params,
+                headers={"Accept-Encoding": "gzip, deflate"},
+                timeout=aiohttp.ClientTimeout(total=10.0),
+            ) as resp:
+                if resp.status == 200:
+                    resp_json = await resp.json()
+                    if isinstance(resp_json, list):
+                        for ev in resp_json:
+                            eid = str(ev.get("id") or "")
+                            if eid and eid not in seen_event_ids:
+                                seen_event_ids.add(eid)
+                                events.append(ev)
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, json.JSONDecodeError):
+            pass
+
+    out = []
+    for event in events:
+        teams_text = " ".join(t.get("name", "") for t in event.get("teams", []))
+        for market in event.get("markets", []):
+            if isinstance(market, dict):
+                market["groupItemTitle"] = str(market.get("groupItemTitle") or "") + " " + teams_text
+                market["events"] = [event]
+                out.append(market)
+    return out
 
 
 def filter_dota_gamma_markets(markets: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -134,12 +187,20 @@ def gamma_market_token_rows(markets: list[dict[str, Any]]) -> list[dict[str, Any
             continue
         for idx, token_id in enumerate(token_ids[:2]):
             outcome = str(outcomes[idx]) if idx < len(outcomes) else ("Yes" if idx == 0 else "No")
+            opposing_id = str(token_ids[1] if idx == 0 else token_ids[0]) if len(token_ids) >= 2 else ""
+            yes_token_id = str(token_ids[0]) if len(token_ids) >= 1 else ""
+            no_token_id = str(token_ids[1]) if len(token_ids) >= 2 else ""
+            
             rows.append(
                 {
                     "market_id": str(market.get("id") or ""),
                     "condition_id": str(market.get("conditionId") or ""),
                     "market_name": str(market.get("question") or market.get("title") or market.get("slug") or ""),
+                    "market_type": str(market.get("sportsMarketType") or ""),
                     "token_id": str(token_id),
+                    "opposing_token_id": opposing_id,
+                    "yes_token_id": yes_token_id,
+                    "no_token_id": no_token_id,
                     "side": outcome.upper(),
                     "active": bool(market.get("active")),
                     "closed": bool(market.get("closed")),
