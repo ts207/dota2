@@ -35,6 +35,7 @@ TRADES_PATH = Path("market_anchor_model_trades.csv")
 CLV_PATH = Path("gettoplive_clv_event_study.csv")
 TRANSITION_EVENT_STUDY_PATH = Path("transition_entry_event_study.csv")
 SUMMARY_PATH = Path("market_anchor_model_summary.csv")
+PROVENANCE_DIAGNOSTIC_PATH = Path("market_anchor_provenance_diagnostic.csv")
 
 MIN_GAME_TIME_SEC = RESEARCH_MIN_GAME_TIME_SEC
 FUTURE_PRICE_MAX_LAG_SEC = 20
@@ -92,8 +93,15 @@ TRANSITION_CATCHUP_FEATURES = [
     "side_transition_nw_per_sec",
     "side_transition_kill_per_sec",
 ]
-CATEGORICAL_FEATURES = ["label_market_bucket"]
-TRANSITION_CATEGORICAL_FEATURES = ["label_market_bucket", "score_nw_lag_type", "transition_signal_type"]
+# Map-equivalent label buckets — both are the same economic exposure
+MAP_EQUIVALENT_LABEL_BUCKETS = {"MAP_WINNER", "MATCH_WINNER_GAME3_PROXY"}
+
+# Categorical features without provenance label (correct for model training)
+CATEGORICAL_FEATURES: list[str] = []
+# Categorical features including provenance label (used for ablation comparison only)
+CATEGORICAL_FEATURES_WITH_BUCKET = ["label_market_bucket"]
+TRANSITION_CATEGORICAL_FEATURES = ["score_nw_lag_type", "transition_signal_type"]
+TRANSITION_CATEGORICAL_FEATURES_WITH_BUCKET = ["label_market_bucket", "score_nw_lag_type", "transition_signal_type"]
 
 
 def pct(value: float) -> str:
@@ -117,12 +125,42 @@ def load_analysis_frame(path: Path = EXECUTABLE_PATH) -> pd.DataFrame:
     frame["pnl_per_share"] = np.where(frame["settled_win"], 1.0 - frame["book_best_ask"], -frame["book_best_ask"])
     frame["pnl_slip_1c"] = np.where(frame["settled_win"], 1.0 - (frame["book_best_ask"] + 0.01), -(frame["book_best_ask"] + 0.01))
     frame["pnl_slip_2c"] = np.where(frame["settled_win"], 1.0 - (frame["book_best_ask"] + 0.02), -(frame["book_best_ask"] + 0.02))
+    frame = add_canonical_exposure_id(frame)
     return frame[
         frame["settled_win"].notna()
         & frame["side_is_radiant"].notna()
         & frame["game_time_sec"].notna()
         & frame["book_best_ask"].notna()
     ].copy()
+
+
+def add_canonical_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:
+    """Stamp a canonical_exposure_id that collapses map-equivalent exposures.
+
+    MAP_WINNER and MATCH_WINNER_GAME3_PROXY rows for the same live map/side are
+    economically identical (series_decider_equivalent / map-equivalent scope).
+    Grouping by ``match_id + current_game_number + side`` makes them one exposure
+    so they cannot be double-counted in PnL or trade ledgers.
+
+    If ``current_game_number`` is missing or NaN we fall back to
+    ``match_id::MAPEQUIV::side`` so all map-equivalent label buckets still
+    collapse together.
+    """
+    out = frame.copy()
+    has_game = "current_game_number" in out.columns and out["current_game_number"].notna().any()
+    has_side = "side" in out.columns
+    if has_game and has_side:
+        game_num = out["current_game_number"].fillna("?").astype(str)
+        out["canonical_exposure_id"] = (
+            out["match_id"].astype(str) + "::" + game_num + "::" + out["side"].astype(str)
+        )
+    elif has_side:
+        out["canonical_exposure_id"] = (
+            out["match_id"].astype(str) + "::MAPEQUIV::" + out["side"].astype(str)
+        )
+    else:
+        out["canonical_exposure_id"] = out["match_id"].astype(str)
+    return out
 
 
 def add_residual_buckets(frame: pd.DataFrame) -> pd.DataFrame:
@@ -272,16 +310,18 @@ def residual_bucket_tables(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def model_pipeline(numeric_features: list[str], categorical_features: list[str] | None = None) -> Pipeline:
-    categorical_features = categorical_features or CATEGORICAL_FEATURES
+    categorical_features = categorical_features if categorical_features is not None else CATEGORICAL_FEATURES
+    transformers: list[tuple] = [
+        ("num", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]), numeric_features),
+    ]
+    if categorical_features:
+        transformers.append(("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_features))
     return Pipeline(
         [
             (
                 "pre",
                 ColumnTransformer(
-                    [
-                        ("num", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]), numeric_features),
-                        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_features),
-                    ],
+                    transformers,
                     verbose_feature_names_out=False,
                 ),
             ),
@@ -291,53 +331,85 @@ def model_pipeline(numeric_features: list[str], categorical_features: list[str] 
 
 
 def market_models() -> dict[str, tuple[Pipeline, list[str]]]:
-    return {
-        "market_only_logistic": (model_pipeline(MARKET_NUMERIC_FEATURES), MARKET_NUMERIC_FEATURES + CATEGORICAL_FEATURES),
-        "market_nw_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + NW_FEATURES),
-            MARKET_NUMERIC_FEATURES + NW_FEATURES + CATEGORICAL_FEATURES,
+    """Return candidate model registry.
+
+    Every model is registered twice:
+    - Base variant (no ``label_market_bucket``) — correct; treats label as provenance only.
+    - ``_with_bucket`` variant (includes ``label_market_bucket``) — ablation only; if edge
+      vanishes without the bucket feature, it indicates a provenance/label artifact.
+    """
+    def _make(numeric: list[str], cat_no_bucket: list[str], cat_with_bucket: list[str]) -> dict[str, tuple[Pipeline, list[str]]]:
+        return {
+            "no_bucket": (model_pipeline(numeric, cat_no_bucket), numeric + cat_no_bucket),
+            "with_bucket": (model_pipeline(numeric, cat_with_bucket), numeric + cat_with_bucket),
+        }
+
+    base: dict[str, dict[str, tuple[Pipeline, list[str]]]] = {
+        "market_only_logistic": _make(
+            MARKET_NUMERIC_FEATURES, CATEGORICAL_FEATURES, CATEGORICAL_FEATURES_WITH_BUCKET
         ),
-        "market_momentum_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + MOMENTUM_FEATURES),
-            MARKET_NUMERIC_FEATURES + MOMENTUM_FEATURES + CATEGORICAL_FEATURES,
+        "market_nw_logistic": _make(
+            MARKET_NUMERIC_FEATURES + NW_FEATURES,
+            CATEGORICAL_FEATURES,
+            CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_kill_momentum_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + KILL_MOMENTUM_FEATURES),
-            MARKET_NUMERIC_FEATURES + KILL_MOMENTUM_FEATURES + CATEGORICAL_FEATURES,
+        "market_momentum_logistic": _make(
+            MARKET_NUMERIC_FEATURES + MOMENTUM_FEATURES,
+            CATEGORICAL_FEATURES,
+            CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_nw_kill_momentum_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + NW_KILL_MOMENTUM_FEATURES),
-            MARKET_NUMERIC_FEATURES + NW_KILL_MOMENTUM_FEATURES + CATEGORICAL_FEATURES,
+        "market_kill_momentum_logistic": _make(
+            MARKET_NUMERIC_FEATURES + KILL_MOMENTUM_FEATURES,
+            CATEGORICAL_FEATURES,
+            CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_score_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + SCORE_FEATURES),
-            MARKET_NUMERIC_FEATURES + SCORE_FEATURES + CATEGORICAL_FEATURES,
+        "market_nw_kill_momentum_logistic": _make(
+            MARKET_NUMERIC_FEATURES + NW_KILL_MOMENTUM_FEATURES,
+            CATEGORICAL_FEATURES,
+            CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_structure_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + STRUCTURE_FEATURES),
-            MARKET_NUMERIC_FEATURES + STRUCTURE_FEATURES + CATEGORICAL_FEATURES,
+        "market_score_logistic": _make(
+            MARKET_NUMERIC_FEATURES + SCORE_FEATURES,
+            CATEGORICAL_FEATURES,
+            CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_gettoplive_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + STATE_NUMERIC_FEATURES),
-            MARKET_NUMERIC_FEATURES + STATE_NUMERIC_FEATURES + CATEGORICAL_FEATURES,
+        "market_structure_logistic": _make(
+            MARKET_NUMERIC_FEATURES + STRUCTURE_FEATURES,
+            CATEGORICAL_FEATURES,
+            CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_transition_nw_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + TRANSITION_NW_FEATURES, TRANSITION_CATEGORICAL_FEATURES),
-            MARKET_NUMERIC_FEATURES + TRANSITION_NW_FEATURES + TRANSITION_CATEGORICAL_FEATURES,
+        "market_gettoplive_logistic": _make(
+            MARKET_NUMERIC_FEATURES + STATE_NUMERIC_FEATURES,
+            CATEGORICAL_FEATURES,
+            CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_transition_kill_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + TRANSITION_KILL_FEATURES, TRANSITION_CATEGORICAL_FEATURES),
-            MARKET_NUMERIC_FEATURES + TRANSITION_KILL_FEATURES + TRANSITION_CATEGORICAL_FEATURES,
+        "market_transition_nw_logistic": _make(
+            MARKET_NUMERIC_FEATURES + TRANSITION_NW_FEATURES,
+            TRANSITION_CATEGORICAL_FEATURES,
+            TRANSITION_CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_transition_nw_kill_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + TRANSITION_NW_KILL_FEATURES, TRANSITION_CATEGORICAL_FEATURES),
-            MARKET_NUMERIC_FEATURES + TRANSITION_NW_KILL_FEATURES + TRANSITION_CATEGORICAL_FEATURES,
+        "market_transition_kill_logistic": _make(
+            MARKET_NUMERIC_FEATURES + TRANSITION_KILL_FEATURES,
+            TRANSITION_CATEGORICAL_FEATURES,
+            TRANSITION_CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
-        "market_transition_catchup_logistic": (
-            model_pipeline(MARKET_NUMERIC_FEATURES + TRANSITION_CATCHUP_FEATURES, TRANSITION_CATEGORICAL_FEATURES),
-            MARKET_NUMERIC_FEATURES + TRANSITION_CATCHUP_FEATURES + TRANSITION_CATEGORICAL_FEATURES,
+        "market_transition_nw_kill_logistic": _make(
+            MARKET_NUMERIC_FEATURES + TRANSITION_NW_KILL_FEATURES,
+            TRANSITION_CATEGORICAL_FEATURES,
+            TRANSITION_CATEGORICAL_FEATURES_WITH_BUCKET,
+        ),
+        "market_transition_catchup_logistic": _make(
+            MARKET_NUMERIC_FEATURES + TRANSITION_CATCHUP_FEATURES,
+            TRANSITION_CATEGORICAL_FEATURES,
+            TRANSITION_CATEGORICAL_FEATURES_WITH_BUCKET,
         ),
     }
+    # Flatten: key = "<family>" (no_bucket) or "<family>__with_bucket"
+    result: dict[str, tuple[Pipeline, list[str]]] = {}
+    for family, variants in base.items():
+        result[family] = variants["no_bucket"]
+        result[f"{family}__with_bucket"] = variants["with_bucket"]
+    return result
 
 
 def summarize_predictions(rows: pd.DataFrame, prob_col: str) -> dict[str, Any]:
@@ -536,6 +608,7 @@ def concentration_tables(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFra
     if trades.empty:
         empty = pd.DataFrame()
         return empty, empty, empty
+    # by_bucket: provenance diagnostic only — NOT a strategy PnL split
     by_bucket = (
         trades.groupby(["stage", "model_name", "label_market_bucket"], as_index=False)
         .agg(
@@ -559,6 +632,27 @@ def concentration_tables(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFra
             total_pnl_slip_2c=("pnl_slip_2c", "sum"),
         )
     )
+    # Detect duplicate exposures: same canonical_exposure_id appearing >1 trade per model
+    if "canonical_exposure_id" in trades.columns:
+        dup_check = (
+            trades.groupby(["stage", "model_name", "canonical_exposure_id"])
+            .size()
+            .reset_index(name="rows_per_exposure")
+        )
+        dup_summary = (
+            dup_check.groupby(["stage", "model_name"])
+            .agg(
+                total_exposures=("canonical_exposure_id", "count"),
+                duplicate_exposures=("rows_per_exposure", lambda s: int((s > 1).sum())),
+                max_rows_per_exposure=("rows_per_exposure", "max"),
+            )
+            .reset_index()
+        )
+        by_match = by_match.merge(
+            dup_summary[["stage", "model_name", "duplicate_exposures"]],
+            on=["stage", "model_name"],
+            how="left",
+        )
     by_match["abs_total_pnl_slip_1c"] = by_match["total_pnl_slip_1c"].abs()
     by_match = by_match.sort_values(["stage", "model_name", "abs_total_pnl_slip_1c"], ascending=[True, True, False]).drop(
         columns=["abs_total_pnl_slip_1c"]
@@ -578,6 +672,54 @@ def concentration_tables(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFra
         .sort_values(["stage", "model_name", "total_pnl_slip_1c"], ascending=[True, True, False])
     )
     return by_bucket, by_match, by_league
+
+
+def provenance_diagnostic_table(trades: pd.DataFrame) -> pd.DataFrame:
+    """Report unified map-equivalent PnL alongside per-provenance breakdown.
+
+    This is a data-quality diagnostic, NOT a strategy split. Both MAP_WINNER and
+    MATCH_WINNER_GAME3_PROXY are the same economic exposure (map-equivalent scope).
+    The split answers: does one provenance source produce worse liquidity or binding
+    artifacts vs. the other?
+
+    Columns:
+    - unified_* columns: PnL/trades after deduping by canonical_exposure_id
+    - rows_per_canonical_exposure: average snapshots per canonical exposure (>1 = overlap)
+    - per-bucket: breakdown of trades and PnL by label_market_bucket (provenance tag)
+    """
+    if trades.empty or "canonical_exposure_id" not in trades.columns:
+        return pd.DataFrame()
+    rows = []
+    for (stage, model_name), sub in trades.groupby(["stage", "model_name"]):
+        # Unified map-equivalent metrics (already deduped by canonical_exposure_id)
+        unified_trades = len(sub)
+        unified_matches = int(sub["match_id"].nunique())
+        unified_pnl = float(sub["pnl_per_share"].sum())
+        unified_pnl_1c = float(sub["pnl_slip_1c"].sum())
+        unified_pnl_2c = float(sub["pnl_slip_2c"].sum())
+        unified_win_rate = float(sub["settled_win"].mean())
+        canonical_ids = sub["canonical_exposure_id"].nunique()
+        row: dict[str, Any] = {
+            "stage": stage,
+            "model_name": model_name,
+            "unified_trades": unified_trades,
+            "unified_matches": unified_matches,
+            "canonical_exposures": canonical_ids,
+            "unified_win_rate": unified_win_rate,
+            "unified_pnl": unified_pnl,
+            "unified_pnl_slip_1c": unified_pnl_1c,
+            "unified_pnl_slip_2c": unified_pnl_2c,
+        }
+        # Per-provenance breakdown (diagnostic)
+        if "label_market_bucket" in sub.columns:
+            for bucket, bsub in sub.groupby("label_market_bucket"):
+                safe_key = str(bucket).replace(" ", "_").lower()
+                row[f"provenance_{safe_key}_trades"] = int(len(bsub))
+                row[f"provenance_{safe_key}_pnl_1c"] = float(bsub["pnl_slip_1c"].sum())
+                row[f"provenance_{safe_key}_win_rate"] = float(bsub["settled_win"].mean())
+        rows.append(row)
+    return pd.DataFrame(rows).sort_values(["stage", "unified_pnl_slip_1c"], ascending=[True, False])
+
 
 
 def wilson_interval(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -652,9 +794,12 @@ def concentration_gate_table(trades: pd.DataFrame | None) -> pd.DataFrame:
     for (stage, model_name), sub in trades.groupby(["stage", "model_name"]):
         row: dict[str, Any] = {"stage": stage, "model_name": model_name}
         checks = []
+        # Use canonical_exposure_id for bucket concentration when available (correct: collapses
+        # MAP_WINNER and MATCH_WINNER_GAME3_PROXY into the same exposure)
+        bucket_col = "canonical_exposure_id" if "canonical_exposure_id" in sub.columns else "label_market_bucket"
         for group_col, out_col in [
             ("match_id", "max_match_pnl_1c_share"),
-            ("label_market_bucket", "max_bucket_pnl_1c_share"),
+            (bucket_col, "max_bucket_pnl_1c_share"),
             ("league_id", "max_league_pnl_1c_share"),
         ]:
             if group_col not in sub.columns:
@@ -1301,9 +1446,27 @@ def build_report(
             ],
         ),
         "",
+        "## Provenance Diagnostic (Unified Map-Equivalent Exposure)",
+        "",
+        "NOTE: MAP_WINNER and MATCH_WINNER_GAME3_PROXY are economically the same map-equivalent exposure.",
+        "Trade ledgers are deduped by `canonical_exposure_id = match_id + current_game_number + side`, collapsing both into one exposure.",
+        "The table below is a DATA-QUALITY diagnostic only. It answers: does one provenance source produce worse liquidity/binding artifacts?",
+        "It does NOT split strategy PnL into separate buckets.",
+        "",
+        markdown_table(
+            provenance_diagnostic_table(trades),
+            [c for c in [
+                "stage", "model_name",
+                "unified_trades", "unified_matches", "canonical_exposures",
+                "unified_win_rate", "unified_pnl", "unified_pnl_slip_1c", "unified_pnl_slip_2c",
+            ] if c in provenance_diagnostic_table(trades).columns] if not provenance_diagnostic_table(trades).empty else
+            ["stage", "model_name"],
+            max_rows=40,
+        ),
+        "",
         "## Trade PnL Concentration",
         "",
-        "By market bucket:",
+        "Provenance breakdown by market label (data-quality diagnostic — NOT a strategy PnL split):",
         "",
         markdown_table(
             by_bucket,
@@ -1339,7 +1502,8 @@ def build_report(
         "",
         "- Acceptance criterion: enhanced market+GetTopLive must beat market-only after 1c and 2c slippage, including lockbox.",
         "- Current readout: settlement residual passes, but CLV fails; this supports hold-to-settlement residual research, not a short-horizon scalp.",
-        "- Trade ledgers dedupe to first qualifying row per `match_id` and `label_market_bucket`.",
+        "- Trade ledgers dedupe by `canonical_exposure_id = match_id + current_game_number + side`. MAP_WINNER and MATCH_WINNER_GAME3_PROXY rows for the same map/side collapse into one trade — they are economically equivalent (map-equivalent scope).",
+        "- `label_market_bucket` is treated as provenance only, NOT as a model feature. Each model family runs twice: base variant (no bucket) and `__with_bucket` ablation. If edge disappears without the bucket feature, flag as provenance/label artifact.",
         f"- CLV uses future executable book rows in the same match/market/token stream, within {FUTURE_PRICE_MAX_LAG_SEC}s after the target horizon; positive future bid minus current ask is the conservative short-horizon test.",
         "",
         "## Files Written",
@@ -1351,6 +1515,7 @@ def build_report(
         f"- `{CLV_PATH}`",
         f"- `{TRANSITION_EVENT_STUDY_PATH}`",
         f"- `{SUMMARY_PATH}`",
+        f"- `{PROVENANCE_DIAGNOSTIC_PATH}`",
     ]
     return "\n".join(lines) + "\n"
 
@@ -1362,12 +1527,14 @@ def main() -> None:
     clv = clv_event_study(frame)
     transition_study = transition_entry_event_study(frame)
     summary = model_summary_table(metrics, trades)
+    provenance_diag = provenance_diagnostic_table(trades)
     residuals.to_csv(RESIDUALS_PATH, index=False)
     predictions.to_csv(PREDICTIONS_PATH, index=False)
     trades.to_csv(TRADES_PATH, index=False)
     clv.to_csv(CLV_PATH, index=False)
     transition_study.to_csv(TRANSITION_EVENT_STUDY_PATH, index=False)
     summary.to_csv(SUMMARY_PATH, index=False)
+    provenance_diag.to_csv(PROVENANCE_DIAGNOSTIC_PATH, index=False)
     REPORT_PATH.write_text(build_report(frame, residuals, predictions, trades, thresholds, metrics, clv, transition_study, folds, split))
     print(f"Saved report: {REPORT_PATH}")
     print(f"Saved residuals: {RESIDUALS_PATH} ({len(residuals)} rows)")
@@ -1376,6 +1543,7 @@ def main() -> None:
     print(f"Saved CLV study: {CLV_PATH} ({len(clv)} rows)")
     print(f"Saved transition event study: {TRANSITION_EVENT_STUDY_PATH} ({len(transition_study)} rows)")
     print(f"Saved summary: {SUMMARY_PATH} ({len(summary)} rows)")
+    print(f"Saved provenance diagnostic: {PROVENANCE_DIAGNOSTIC_PATH} ({len(provenance_diag)} rows)")
     print(aggregate_model_metrics(metrics).to_string(index=False))
 
 

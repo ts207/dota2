@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from market_residual_gettoplive_analysis import (
+    add_canonical_exposure_id,
     add_future_prices,
     concentration_tables,
     fold_robustness_table,
@@ -10,6 +11,7 @@ from market_residual_gettoplive_analysis import (
     market_models,
     model_summary_table,
     prediction_output,
+    provenance_diagnostic_table,
     residual_bucket_tables,
     trade_output,
     trade_uncertainty_table,
@@ -29,7 +31,7 @@ def test_market_calibration_table_uses_ask_bucket_residual_metrics():
 
 
 def test_market_models_include_feature_family_ablations():
-    assert {
+    base_families = {
         "market_only_logistic",
         "market_nw_logistic",
         "market_momentum_logistic",
@@ -42,7 +44,19 @@ def test_market_models_include_feature_family_ablations():
         "market_transition_kill_logistic",
         "market_transition_nw_kill_logistic",
         "market_transition_catchup_logistic",
-    }.issubset(set(market_models()))
+    }
+    models = set(market_models())
+    # Every family has a base variant and a __with_bucket ablation variant
+    assert base_families.issubset(models)
+    assert {f"{f}__with_bucket" for f in base_families}.issubset(models)
+    # Base variants must NOT include label_market_bucket in their feature lists
+    for family in base_families:
+        _, features = market_models()[family]
+        assert "label_market_bucket" not in features, f"{family} base should not use label_market_bucket"
+    # __with_bucket variants MUST include label_market_bucket
+    for family in base_families:
+        _, features = market_models()[f"{family}__with_bucket"]
+        assert "label_market_bucket" in features, f"{family}__with_bucket must include label_market_bucket"
 
 
 def test_residual_bucket_tables_include_required_state_dimensions():
@@ -362,3 +376,56 @@ def _frame(*, match_id: str = "m1", ask: float | None = None, settled_win: bool 
             }
         )
     return pd.DataFrame(rows)
+
+
+def test_add_canonical_exposure_id_uses_match_game_side():
+    frame = pd.DataFrame([
+        {"match_id": "m1", "current_game_number": 3, "side": "YES"},
+        {"match_id": "m1", "current_game_number": 3, "side": "NO"},
+        {"match_id": "m1", "current_game_number": 2, "side": "YES"},
+        {"match_id": "m2", "current_game_number": 3, "side": "YES"},
+    ])
+
+    out = add_canonical_exposure_id(frame)
+
+    assert "canonical_exposure_id" in out.columns
+    assert out.loc[0, "canonical_exposure_id"] == "m1::3::YES"
+    assert out.loc[1, "canonical_exposure_id"] == "m1::3::NO"
+    assert out.loc[2, "canonical_exposure_id"] == "m1::2::YES"
+    assert out.loc[3, "canonical_exposure_id"] == "m2::3::YES"
+    # MAP_WINNER and MATCH_WINNER_GAME3_PROXY for the same match/game/side should
+    # produce the same canonical_exposure_id (tested implicitly via equal keys)
+    frame2 = pd.DataFrame([
+        {"match_id": "m1", "current_game_number": 3, "side": "NO", "label_market_bucket": "MAP_WINNER"},
+        {"match_id": "m1", "current_game_number": 3, "side": "NO", "label_market_bucket": "MATCH_WINNER_GAME3_PROXY"},
+    ])
+    out2 = add_canonical_exposure_id(frame2)
+    assert out2.loc[0, "canonical_exposure_id"] == out2.loc[1, "canonical_exposure_id"]
+
+
+def test_provenance_diagnostic_table_reports_unified_pnl():
+    """provenance_diagnostic_table collapses all exposures into unified PnL
+    and provides a per-bucket breakdown for data-quality diagnostics."""
+    trades = pd.DataFrame([
+        {
+            "stage": "walk_forward", "model_name": "m",
+            "match_id": "m1", "canonical_exposure_id": "m1::3::NO",
+            "label_market_bucket": "MAP_WINNER",
+            "settled_win": True, "pnl_per_share": 0.6, "pnl_slip_1c": 0.59, "pnl_slip_2c": 0.58,
+        },
+        {
+            "stage": "walk_forward", "model_name": "m",
+            "match_id": "m2", "canonical_exposure_id": "m2::3::YES",
+            "label_market_bucket": "MATCH_WINNER_GAME3_PROXY",
+            "settled_win": False, "pnl_per_share": -0.35, "pnl_slip_1c": -0.36, "pnl_slip_2c": -0.37,
+        },
+    ])
+
+    diag = provenance_diagnostic_table(trades).iloc[0]
+
+    assert diag["unified_trades"] == 2
+    assert diag["canonical_exposures"] == 2
+    assert "provenance_map_winner_trades" in diag.index
+    assert "provenance_match_winner_game3_proxy_trades" in diag.index
+    assert diag["provenance_map_winner_trades"] == 1
+    assert diag["provenance_match_winner_game3_proxy_trades"] == 1

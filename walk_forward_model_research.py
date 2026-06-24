@@ -268,11 +268,26 @@ def apply_calibrator(raw_prob: np.ndarray, calibrator: IsotonicRegression | None
 
 
 def first_trade_rows(rows: pd.DataFrame) -> pd.DataFrame:
+    """Return the first qualifying row per canonical exposure.
+
+    Canonical exposure is ``match_id + current_game_number + side`` when those
+    columns exist, which collapses MAP_WINNER and MATCH_WINNER_GAME3_PROXY rows
+    for the same live map/side into a single exposure (they are economically
+    equivalent).  Falls back to ``match_id + label_market_bucket`` only when
+    ``current_game_number`` or ``side`` is absent.
+    """
     if rows.empty:
         return rows.copy()
+    has_canonical = "current_game_number" in rows.columns and "side" in rows.columns
+    if has_canonical:
+        sort_cols = ["match_id", "current_game_number", "side", "received_at_ns", "book_best_ask"]
+        dedup_cols = ["match_id", "current_game_number", "side"]
+    else:
+        sort_cols = ["match_id", "label_market_bucket", "received_at_ns", "book_best_ask"]
+        dedup_cols = ["match_id", "label_market_bucket"]
     return (
-        rows.sort_values(["match_id", "label_market_bucket", "received_at_ns", "book_best_ask"])
-        .drop_duplicates(["match_id", "label_market_bucket"], keep="first")
+        rows.sort_values(sort_cols)
+        .drop_duplicates(dedup_cols, keep="first")
         .copy()
     )
 

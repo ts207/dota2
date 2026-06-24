@@ -41,7 +41,33 @@ def test_make_folds_uses_past_matches_only():
         assert max(fit | validation) < min(test)
 
 
-def test_first_trade_rows_dedupes_by_match_and_bucket_only():
+def test_first_trade_rows_dedupes_by_canonical_exposure_when_columns_present():
+    """With current_game_number + side columns, MAP_WINNER and MATCH_WINNER_GAME3_PROXY
+    for the same game/side collapse into a single canonical exposure (correct behaviour)."""
+    frame = pd.DataFrame(
+        [
+            # Same match, same game, same side, different label buckets -> ONE canonical exposure
+            {"match_id": "m1", "current_game_number": 3, "side": "NO", "label_market_bucket": "MAP_WINNER", "received_at_ns": 2, "book_best_ask": 0.40},
+            {"match_id": "m1", "current_game_number": 3, "side": "NO", "label_market_bucket": "MATCH_WINNER_GAME3_PROXY", "received_at_ns": 1, "book_best_ask": 0.50},
+            # Same match, same game, different side -> separate exposure
+            {"match_id": "m1", "current_game_number": 3, "side": "YES", "label_market_bucket": "MAP_WINNER", "received_at_ns": 1, "book_best_ask": 0.60},
+            # Different match -> separate exposure
+            {"match_id": "m2", "current_game_number": 3, "side": "NO", "label_market_bucket": "MAP_WINNER", "received_at_ns": 1, "book_best_ask": 0.70},
+        ]
+    )
+
+    deduped = first_trade_rows(frame)
+
+    # 3 canonical exposures: (m1,3,NO), (m1,3,YES), (m2,3,NO)
+    assert len(deduped) == 3
+    # For (m1,3,NO): earliest received_at_ns=1 (MATCH_WINNER_GAME3_PROXY row) wins
+    m1_no = deduped[(deduped["match_id"] == "m1") & (deduped["side"] == "NO")]
+    assert len(m1_no) == 1
+    assert m1_no.iloc[0]["received_at_ns"] == 1
+
+
+def test_first_trade_rows_fallback_dedupes_by_match_and_bucket_without_canonical_cols():
+    """Without current_game_number/side columns, falls back to match_id+label_market_bucket."""
     frame = pd.DataFrame(
         [
             {"match_id": "m1", "label_market_bucket": "MAP_WINNER", "received_at_ns": 2, "book_best_ask": 0.40},
