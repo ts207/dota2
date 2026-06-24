@@ -20,7 +20,7 @@ from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from validate_pattern_strategies import feature_executable_rows
+from dota2bot.side_features import add_side_features
 
 
 EXECUTABLE_PATH = Path("datasets/clean_executable_backtest_dataset/clean_backtest_side_snapshots.parquet")
@@ -97,33 +97,7 @@ def add_time_delta(frame: pd.DataFrame, value_col: str, seconds: int, out_col: s
 
 
 def load_exec() -> pd.DataFrame:
-    df = feature_executable_rows(pd.read_parquet(EXECUTABLE_PATH))
-    add_time_delta(df, "total_kills", 100, "kills_change_100s")
-    sign = np.where(df["side_is_radiant"], 1.0, -1.0)
-    df["book_age_s"] = df["book_age_ms"] / 1000.0
-    df["side_nw"] = sign * df["nw_lead_clean"]
-    df["side_score"] = sign * df["score_diff"]
-    df["side_tower"] = sign * df["tower_advantage"]
-    df["side_rax"] = sign * df["rax_lane_advantage"]
-    df["side_mom_100"] = sign * df["nw_change_100s"]
-    df["side_mom_300"] = sign * df["nw_change_300s"]
-    df["side_kill_mom"] = sign * df["kills_change_100s"]
-    df["state_score"] = (
-        0.00012 * df["side_nw"].clip(-30000, 30000)
-        + 0.08 * df["side_score"].clip(-25, 25)
-        + 0.00006 * df["side_mom_100"].clip(-15000, 15000)
-        + 0.18 * df["side_tower"].fillna(0).clip(-8, 8)
-        + 0.45 * df["side_rax"].fillna(0).clip(-3, 3)
-    )
-    df["state_prob_proxy"] = 1 / (1 + np.exp(-df["state_score"]))
-    df["state_edge_proxy"] = df["state_prob_proxy"] - df["book_best_ask"]
-    df["nw_price_gap"] = df["side_nw"] / 1000.0 - 10 * (df["book_best_ask"] - 0.5)
-    df["scoreboard_lag"] = (df["side_nw"] >= 3000) & (df["side_score"] <= 3)
-    df["momentum_lag"] = (df["side_mom_100"] >= 3000) & (df["side_nw"] <= 10000)
-    df["structure_confirms"] = (df["side_tower"].fillna(0) >= 1) | (df["side_rax"].fillna(0) >= 1)
-    df["fresh"] = df["book_age_s"] <= 60
-    df["sane_ask"] = df["book_best_ask"].between(0.05, 0.95)
-    df["liquid"] = df["book_ask_size"] >= 25
+    df = add_side_features(pd.read_parquet(EXECUTABLE_PATH), min_game_time_sec=0)
     df["pnl_per_share"] = np.where(df["settled_win"], 1.0 - df["book_best_ask"], -df["book_best_ask"])
     df["roi"] = df["pnl_per_share"] / df["book_best_ask"]
     return df[df["book_best_ask"].notna() & df["game_time_sec"].notna()].copy()

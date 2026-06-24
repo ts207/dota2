@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from walk_forward_model_research import first_trade_rows, make_folds, split_development_lockbox
+from dota2bot.side_features import add_side_features
+from walk_forward_model_research import first_trade_rows, make_folds, split_development_lockbox, trade_output
 
 
 def test_split_development_lockbox_keeps_last_matches_for_lockbox():
@@ -58,3 +59,54 @@ def test_first_trade_rows_dedupes_by_match_and_bucket_only():
         ["m1", "MATCH_WINNER", 1],
         ["m2", "MAP_WINNER", 1],
     ]
+
+
+def test_side_features_require_min_game_time_for_research_tradability():
+    frame = _snapshot_frame([500, 700])
+
+    featured = add_side_features(frame, min_game_time_sec=600)
+
+    assert featured.loc[featured["game_time_sec"] == 500, "tradable_research"].tolist() == [False]
+    assert featured.loc[featured["game_time_sec"] == 700, "tradable_research"].tolist() == [True]
+
+
+def test_trade_output_empty_uses_fixed_ledger_columns():
+    out = trade_output(pd.DataFrame())
+
+    assert "stage" in out.columns
+    assert "pnl_slip_1c" in out.columns
+    assert "condition_id" not in out.columns
+
+
+def _snapshot_frame(game_times: list[int]) -> pd.DataFrame:
+    rows = []
+    for idx, game_time in enumerate(game_times, start=1):
+        rows.append(
+            {
+                "match_id": "m1",
+                "market_id": "market1",
+                "label_market_bucket": "MAP_WINNER",
+                "token_id": "token_yes",
+                "side": "YES",
+                "received_at_utc": f"t{idx}",
+                "received_at_ns": idx * 1_000,
+                "game_time_sec": game_time,
+                "league_id": "league1",
+                "book_best_ask": 0.80,
+                "book_best_bid": 0.79,
+                "book_spread": 0.01,
+                "book_ask_size": 200,
+                "book_age_ms": 1000,
+                "executable_snapshot": True,
+                "quality_reason": "ok",
+                "settled_win": None,
+                "side_is_radiant": True,
+                "radiant_lead": 10000,
+                "net_worth_diff": 10000,
+                "radiant_score": 20,
+                "dire_score": 10,
+                "tower_state": None,
+                "building_state": None,
+            }
+        )
+    return pd.DataFrame(rows)

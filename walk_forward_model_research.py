@@ -22,7 +22,7 @@ from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
-from validate_pattern_strategies import feature_executable_rows
+from dota2bot.side_features import RESEARCH_MIN_GAME_TIME_SEC, add_side_features
 
 
 EXECUTABLE_PATH = Path("datasets/clean_executable_backtest_dataset/clean_backtest_side_snapshots.parquet")
@@ -35,6 +35,7 @@ N_FOLDS = 5
 LOCKBOX_FRACTION = 0.20
 VALIDATION_FRACTION = 0.25
 MIN_VALIDATION_MATCHES = 10
+MIN_GAME_TIME_SEC = RESEARCH_MIN_GAME_TIME_SEC
 EDGE_THRESHOLDS = [0.02, 0.05, 0.08, 0.10, 0.12, 0.15, 0.20]
 RESIDUAL_THRESHOLDS = [0.50, 0.55, 0.60, 0.65, 0.70]
 MIN_THRESHOLD_TRADES = 3
@@ -100,36 +101,8 @@ def signed(value: float) -> str:
 
 
 def load_model_frame(path: Path = EXECUTABLE_PATH) -> pd.DataFrame:
-    frame = feature_executable_rows(pd.read_parquet(path))
-    add_time_delta(frame, "total_kills", 100, "kills_change_100s")
-    sign = np.where(frame["side_is_radiant"], 1.0, -1.0)
-    frame["book_age_s"] = frame["book_age_ms"] / 1000.0
-    frame["side_nw"] = sign * frame["nw_lead_clean"]
-    frame["side_score"] = sign * frame["score_diff"]
-    frame["side_tower"] = sign * frame["tower_advantage"]
-    frame["side_rax"] = sign * frame["rax_lane_advantage"]
-    frame["side_mom_100"] = sign * frame["nw_change_100s"]
-    frame["side_mom_300"] = sign * frame["nw_change_300s"]
-    frame["side_kill_mom"] = sign * frame["kills_change_100s"]
-    if "seconds_since_state_change" not in frame.columns:
-        frame["seconds_since_state_change"] = np.nan
-    if frame["seconds_since_state_change"].isna().all():
-        frame["seconds_since_state_change"] = 0.0
-    frame["state_score"] = (
-        0.00012 * frame["side_nw"].clip(-30000, 30000)
-        + 0.08 * frame["side_score"].clip(-25, 25)
-        + 0.00006 * frame["side_mom_100"].fillna(0).clip(-15000, 15000)
-        + 0.18 * frame["side_tower"].fillna(0).clip(-8, 8)
-        + 0.45 * frame["side_rax"].fillna(0).clip(-3, 3)
-    )
-    frame["state_prob_proxy"] = 1 / (1 + np.exp(-frame["state_score"]))
-    frame["state_edge_proxy"] = frame["state_prob_proxy"] - frame["book_best_ask"]
-    frame["tradable"] = (
-        frame["book_best_ask"].between(0.05, 0.95)
-        & frame["book_best_bid"].notna()
-        & (frame["book_age_ms"] <= 60_000)
-        & (frame["book_ask_size"] >= 25)
-    )
+    frame = add_side_features(pd.read_parquet(path), min_game_time_sec=MIN_GAME_TIME_SEC)
+    frame["tradable"] = frame["tradable_research"]
     frame["pnl_per_share"] = np.where(frame["settled_win"], 1.0 - frame["book_best_ask"], -frame["book_best_ask"])
     frame["pnl_slip_1c"] = np.where(frame["settled_win"], 1.0 - (frame["book_best_ask"] + 0.01), -(frame["book_best_ask"] + 0.01))
     frame["pnl_slip_2c"] = np.where(frame["settled_win"], 1.0 - (frame["book_best_ask"] + 0.02), -(frame["book_best_ask"] + 0.02))
@@ -458,7 +431,7 @@ def run_walk_forward(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, p
                     "model_name": model_name,
                     "model_type": "fair_probability",
                     "selected_threshold": threshold,
-                    **{f"pred_{k}": v for k, v in summarize_predictions(test_scored, "calibrated_prob").items()},
+                    **{f"pred_{k}": v for k, v in summarize_predictions(test_scored[test_scored["tradable"]], "calibrated_prob").items()},
                     **{f"trade_{k}": v for k, v in summarize_trades(trades).items()},
                 }
             )
@@ -499,7 +472,7 @@ def run_walk_forward(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, p
                         "model_name": "logistic_residual_trade",
                         "model_type": "market_aware_residual",
                         "selected_threshold": residual_threshold,
-                        **{f"pred_{k}": v for k, v in summarize_predictions(residual_test, "calibrated_prob").items()},
+                        **{f"pred_{k}": v for k, v in summarize_predictions(residual_test[residual_test["tradable"]], "calibrated_prob").items()},
                         **{f"trade_{k}": v for k, v in summarize_trades(residual_trades).items()},
                     }
                 )
@@ -526,7 +499,7 @@ def run_walk_forward(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, p
                     "model_name": rule_name,
                     "model_type": "hand_rule_benchmark",
                     "selected_threshold": np.nan,
-                    **{f"pred_{k}": v for k, v in summarize_predictions(rule_test, "calibrated_prob").items()},
+                    **{f"pred_{k}": v for k, v in summarize_predictions(rule_test[rule_test["tradable"]], "calibrated_prob").items()},
                     **{f"trade_{k}": v for k, v in summarize_trades(trades).items()},
                 }
             )
@@ -581,7 +554,7 @@ def run_lockbox_check(frame: pd.DataFrame, split: DatasetSplit, model_name: str)
                     "model_name": model_name,
                     "model_type": "lockbox_selected",
                     "selected_threshold": np.nan,
-                    **{f"pred_{k}": v for k, v in summarize_predictions(scored, "calibrated_prob").items()},
+                    **{f"pred_{k}": v for k, v in summarize_predictions(scored[scored["tradable"]], "calibrated_prob").items()},
                     **{f"trade_{k}": v for k, v in summarize_trades(lockbox_trades).items()},
                 }
             ]
@@ -627,7 +600,7 @@ def run_lockbox_check(frame: pd.DataFrame, split: DatasetSplit, model_name: str)
                     "model_name": model_name,
                     "model_type": "lockbox_selected",
                     "selected_threshold": threshold,
-                    **{f"pred_{k}": v for k, v in summarize_predictions(lockbox_scored, "calibrated_prob").items()},
+                    **{f"pred_{k}": v for k, v in summarize_predictions(lockbox_scored[lockbox_scored["tradable"]], "calibrated_prob").items()},
                     **{f"trade_{k}": v for k, v in summarize_trades(lockbox_trades).items()},
                 }
             ]
@@ -668,7 +641,7 @@ def run_lockbox_check(frame: pd.DataFrame, split: DatasetSplit, model_name: str)
                 "model_name": model_name,
                 "model_type": "lockbox_selected",
                 "selected_threshold": threshold,
-                **{f"pred_{k}": v for k, v in summarize_predictions(lockbox_scored, "calibrated_prob").items()},
+                **{f"pred_{k}": v for k, v in summarize_predictions(lockbox_scored[lockbox_scored["tradable"]], "calibrated_prob").items()},
                 **{f"trade_{k}": v for k, v in summarize_trades(lockbox_trades).items()},
             }
         ]
@@ -701,6 +674,7 @@ def prediction_output(frame: pd.DataFrame, *, residual: bool = False) -> pd.Data
         "edge",
         "entry_threshold",
         "signal",
+        "tradable",
         "reason",
         "side_nw",
         "side_score",
@@ -719,8 +693,6 @@ def prediction_output(frame: pd.DataFrame, *, residual: bool = False) -> pd.Data
 
 
 def trade_output(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty:
-        return frame
     cols = [
         "stage",
         "fold",
@@ -735,11 +707,14 @@ def trade_output(frame: pd.DataFrame) -> pd.DataFrame:
         "received_at_utc",
         "received_at_ns",
         "game_time_sec",
+        "league_id",
         "settled_win",
         "fair_prob",
         "calibrated_prob",
         "book_best_ask",
         "book_best_bid",
+        "book_spread",
+        "book_ask_size",
         "edge",
         "entry_threshold",
         "paper_entry_price",
@@ -753,6 +728,8 @@ def trade_output(frame: pd.DataFrame) -> pd.DataFrame:
         "side_mom_100",
         "reason",
     ]
+    if frame.empty:
+        return pd.DataFrame(columns=cols)
     return frame[[c for c in cols if c in frame.columns]].copy()
 
 
@@ -791,7 +768,9 @@ def calibration_table(predictions: pd.DataFrame) -> pd.DataFrame:
     for model_name, sub in predictions.groupby("model_name"):
         if sub.empty or "calibrated_prob" not in sub:
             continue
-        view = sub.copy()
+        view = sub[sub["tradable"]].copy() if "tradable" in sub.columns else sub.copy()
+        if view.empty:
+            continue
         view["prob_bucket"] = pd.cut(view["calibrated_prob"], bins=np.linspace(0, 1, 6), include_lowest=True)
         for bucket, b in view.groupby("prob_bucket", observed=False):
             if b.empty:
@@ -815,6 +794,81 @@ def benchmark_market_and_proxy(frame: pd.DataFrame) -> pd.DataFrame:
         pred = summarize_predictions(tradable, prob_col)
         rows.append({"model_name": name, "model_type": "benchmark_probability", **{f"pred_{k}": v for k, v in pred.items()}})
     return pd.DataFrame(rows)
+
+
+def game_time_sensitivity(frame: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for min_game_time_sec in [0, 300, 600, 900]:
+        view = frame.copy()
+        view["tradable"] = (
+            view["book_best_ask"].between(0.05, 0.95)
+            & view["book_best_bid"].notna()
+            & (view["book_age_ms"] <= 60_000)
+            & (view["book_ask_size"] >= 25)
+            & (view["game_time_sec"] >= min_game_time_sec)
+        )
+        row: dict[str, Any] = {
+            "min_game_time_sec": min_game_time_sec,
+            "tradable_rows": int(view["tradable"].sum()),
+            "tradable_matches": int(view.loc[view["tradable"], "match_id"].nunique()),
+        }
+        for rule_name in TOP_RULES:
+            trades = first_trade_rows(view[score_rule(view, rule_name)]).copy()
+            summary = summarize_trades(trades)
+            prefix = rule_name.replace("all_", "")
+            row[f"{prefix}_trades"] = summary["trades"]
+            row[f"{prefix}_total_pnl_slip_1c"] = summary["total_pnl_slip_1c"]
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def concentration_tables(trades: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if trades.empty:
+        empty = pd.DataFrame()
+        return empty, empty, empty
+    by_bucket = (
+        trades.groupby(["model_name", "label_market_bucket"], as_index=False)
+        .agg(
+            trades=("match_id", "size"),
+            matches=("match_id", "nunique"),
+            win_rate=("settled_win", "mean"),
+            total_pnl=("pnl_per_share", "sum"),
+            total_pnl_slip_1c=("pnl_slip_1c", "sum"),
+            total_pnl_slip_2c=("pnl_slip_2c", "sum"),
+        )
+        .sort_values(["model_name", "total_pnl_slip_1c"], ascending=[True, False])
+    )
+    by_match = (
+        trades.groupby(["model_name", "match_id"], as_index=False)
+        .agg(
+            trades=("label_market_bucket", "size"),
+            buckets=("label_market_bucket", "nunique"),
+            win_rate=("settled_win", "mean"),
+            total_pnl=("pnl_per_share", "sum"),
+            total_pnl_slip_1c=("pnl_slip_1c", "sum"),
+            total_pnl_slip_2c=("pnl_slip_2c", "sum"),
+        )
+    )
+    by_match["abs_total_pnl_slip_1c"] = by_match["total_pnl_slip_1c"].abs()
+    by_match = by_match.sort_values(["model_name", "abs_total_pnl_slip_1c"], ascending=[True, False]).drop(
+        columns=["abs_total_pnl_slip_1c"]
+    )
+    if "league_id" in trades.columns:
+        by_league = (
+            trades.groupby(["model_name", "league_id"], dropna=False, as_index=False)
+            .agg(
+                trades=("match_id", "size"),
+                matches=("match_id", "nunique"),
+                win_rate=("settled_win", "mean"),
+                total_pnl=("pnl_per_share", "sum"),
+                total_pnl_slip_1c=("pnl_slip_1c", "sum"),
+                total_pnl_slip_2c=("pnl_slip_2c", "sum"),
+            )
+            .sort_values(["model_name", "total_pnl_slip_1c"], ascending=[True, False])
+        )
+    else:
+        by_league = pd.DataFrame()
+    return by_bucket, by_match, by_league
 
 
 def markdown_table(df: pd.DataFrame, cols: list[str], max_rows: int | None = None) -> str:
@@ -852,6 +906,8 @@ def build_report(
     aggregate = aggregate_metrics(fold_metrics)
     calibration = calibration_table(predictions)
     benchmarks = benchmark_market_and_proxy(frame)
+    sensitivity = game_time_sensitivity(frame)
+    by_bucket, by_match, by_league = concentration_tables(trades)
     fold_summary = pd.DataFrame(
         [
             {
@@ -877,6 +933,7 @@ def build_report(
         f"- Lockbox matches: {len(split.lockbox_matches):,}",
         f"- Markets: {frame['market_id'].nunique():,}",
         f"- Tradable rows: {int(frame['tradable'].sum()):,}",
+        f"- Minimum game time for tradable rows: {MIN_GAME_TIME_SEC}s",
         f"- Rows with tower state: {int(frame['tower_state'].notna().sum()):,}",
         f"- Rows with building state: {int(frame['building_state'].notna().sum()):,}",
         f"- First timestamp: {frame['received_at_utc'].min()}",
@@ -892,6 +949,12 @@ def build_report(
             benchmarks,
             ["model_name", "model_type", "pred_rows", "pred_auc", "pred_log_loss", "pred_brier", "pred_avg_prob", "pred_realized_win_rate"],
         ),
+        "",
+        "Note: hand-rule benchmark AUC/log-loss/Brier use the shared composite `state_prob_proxy`; they are heuristic diagnostics, not calibrated rule probabilities. Trade metrics are the relevant hand-rule measure.",
+        "",
+        "## Game-Time Sensitivity",
+        "",
+        markdown_table(sensitivity, list(sensitivity.columns)),
         "",
         "## Walk-Forward Comparison",
         "",
@@ -972,6 +1035,32 @@ def build_report(
         "",
         markdown_table(calibration, ["model_name", "prob_bucket", "rows", "avg_prob", "realized_win_rate"], max_rows=80),
         "",
+        "## PnL Concentration",
+        "",
+        "By market bucket:",
+        "",
+        markdown_table(
+            by_bucket,
+            ["model_name", "label_market_bucket", "trades", "matches", "win_rate", "total_pnl", "total_pnl_slip_1c", "total_pnl_slip_2c"],
+            max_rows=80,
+        ),
+        "",
+        "Largest match contributions by absolute 1c-slippage PnL:",
+        "",
+        markdown_table(
+            by_match,
+            ["model_name", "match_id", "trades", "buckets", "win_rate", "total_pnl", "total_pnl_slip_1c", "total_pnl_slip_2c"],
+            max_rows=80,
+        ),
+        "",
+        "By league:",
+        "",
+        markdown_table(
+            by_league,
+            ["model_name", "league_id", "trades", "matches", "win_rate", "total_pnl", "total_pnl_slip_1c", "total_pnl_slip_2c"],
+            max_rows=80,
+        ),
+        "",
         "## Threshold Search",
         "",
         markdown_table(
@@ -984,6 +1073,7 @@ def build_report(
         "",
         "- These are walk-forward research results, not deployment approval.",
         "- Fair-probability models use state features only; ask/spread/liquidity are used only for edge conversion and the residual trade benchmark.",
+        f"- Tradability now requires `game_time_sec >= {MIN_GAME_TIME_SEC}` so pregame and countdown rows cannot generate trades.",
         "- Thresholds are selected on past validation matches inside each fold, then applied once to future matches.",
         "- If no model or hand rule stays positive after 1c and 2c slippage, do not trade it.",
         "",
