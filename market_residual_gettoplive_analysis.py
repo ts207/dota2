@@ -36,6 +36,10 @@ CLV_PATH = Path("gettoplive_clv_event_study.csv")
 TRANSITION_EVENT_STUDY_PATH = Path("transition_entry_event_study.csv")
 SUMMARY_PATH = Path("market_anchor_model_summary.csv")
 PROVENANCE_DIAGNOSTIC_PATH = Path("market_anchor_provenance_diagnostic.csv")
+CANDIDATE_BOARD_PATH = Path("candidate_selection.csv")
+BUCKET_ARTIFACT_PATH = Path("bucket_artifact_check.csv")
+DUPLICATE_IMPACT_PATH = Path("duplicate_exposure_impact.csv")
+INSTRUMENT_DIAGNOSTIC_PATH = Path("instrument_provenance_diagnostic.csv")
 
 MIN_GAME_TIME_SEC = RESEARCH_MIN_GAME_TIME_SEC
 FUTURE_PRICE_MAX_LAG_SEC = 20
@@ -468,13 +472,24 @@ def choose_threshold(validation: pd.DataFrame) -> tuple[float, pd.DataFrame]:
     return float(eligible.iloc[0]["threshold"]), table
 
 
-def run_market_anchor_walk_forward(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[Fold], DatasetSplit]:
+def run_market_anchor_walk_forward(
+    frame: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, list[Fold], DatasetSplit, pd.DataFrame]:
+    """Run walk-forward + lockbox evaluation for all model variants.
+
+    Returns a 7-tuple:
+    (predictions, trades, thresholds, metrics, folds, split, raw_trades)
+
+    ``raw_trades`` contains all signal rows BEFORE canonical-exposure deduplication.
+    Used by ``duplicate_exposure_impact_table`` to quantify PnL removed by deduplication.
+    """
     split = split_development_lockbox(frame)
     development = frame[frame["match_id"].astype(str).isin(split.development_matches)].copy()
     lockbox = frame[frame["match_id"].astype(str).isin(split.lockbox_matches)].copy()
     folds = make_folds(development)
     predictions: list[pd.DataFrame] = []
     trades: list[pd.DataFrame] = []
+    raw_trades: list[pd.DataFrame] = []   # pre-dedupe signals
     threshold_rows: list[pd.DataFrame] = []
     metrics: list[dict[str, Any]] = []
 
@@ -505,8 +520,12 @@ def run_market_anchor_walk_forward(frame: pd.DataFrame) -> tuple[pd.DataFrame, p
             test_scored["signal"] = test_scored["tradable"] & (test_scored["edge"] >= threshold)
             test_scored["reason"] = np.where(test_scored["signal"], "market_anchor_edge", "below_threshold_or_not_tradable")
             predictions.append(prediction_output(test_scored))
-            model_trades = first_trade_rows(test_scored[test_scored["signal"]]).copy()
-            model_trades["paper_entry_price"] = model_trades["book_best_ask"]
+
+            signal_rows = test_scored[test_scored["signal"]].copy()
+            signal_rows["paper_entry_price"] = signal_rows["book_best_ask"]
+            raw_trades.append(trade_output(signal_rows))   # all signals, pre-dedupe
+
+            model_trades = first_trade_rows(signal_rows).copy()
             trades.append(trade_output(model_trades))
             metrics.append(
                 {
@@ -532,6 +551,7 @@ def run_market_anchor_walk_forward(frame: pd.DataFrame) -> tuple[pd.DataFrame, p
         pd.DataFrame(metrics),
         folds,
         split,
+        pd.concat(raw_trades, ignore_index=True) if raw_trades else pd.DataFrame(),
     )
 
 
@@ -720,6 +740,208 @@ def provenance_diagnostic_table(trades: pd.DataFrame) -> pd.DataFrame:
         rows.append(row)
     return pd.DataFrame(rows).sort_values(["stage", "unified_pnl_slip_1c"], ascending=[True, False])
 
+
+def candidate_board_table(model_metrics: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame:
+    """Canonical candidate board after semantic fix.
+
+    Columns: model_name, with_bucket, trades, canonical_exposures, win_rate,
+    avg_ask, pnl_raw, pnl_1c, pnl_2c, folds_with_trades, folds_positive_1c,
+    lockbox_pnl_1c, candidate_status.
+
+    candidate_status rules:
+    - 'candidate'       : walk positive 1c+2c, lockbox positive 1c+2c, folds_with_trades>=4, folds_positive_1c>=3
+    - 'research_only'   : walk positive 1c+2c but fails fold/lockbox gates
+    - 'reject'          : negative after slippage
+    - 'artifact_risk'   : only the __with_bucket version passes (base fails)
+    """
+    if model_metrics.empty:
+        return pd.DataFrame()
+    walk = model_metrics[model_metrics["stage"] == "walk_forward"].copy()
+    lock = model_metrics[model_metrics["stage"] == "lockbox"].copy()
+
+    walk_agg = (
+        walk.groupby("model_name", as_index=False)
+        .agg(
+            folds_with_trades=("trade_trades", lambda s: int((s > 0).sum())),
+            folds_positive_1c=("trade_total_pnl_slip_1c", lambda s: int((s > 0).sum())),
+            folds_positive_2c=("trade_total_pnl_slip_2c", lambda s: int((s > 0).sum())),
+            raw_trades=("trade_trades", "sum"),
+            pnl_raw=("trade_total_pnl", "sum"),
+            pnl_1c=("trade_total_pnl_slip_1c", "sum"),
+            pnl_2c=("trade_total_pnl_slip_2c", "sum"),
+            win_rate=("trade_win_rate", "mean"),
+            avg_ask=("trade_avg_ask", "mean"),
+        )
+    )
+
+    lock_agg = (
+        lock.groupby("model_name", as_index=False)
+        .agg(lockbox_pnl_1c=("trade_total_pnl_slip_1c", "sum"))
+    ) if not lock.empty else pd.DataFrame(columns=["model_name", "lockbox_pnl_1c"])
+
+    board = walk_agg.merge(lock_agg, on="model_name", how="left")
+    board["lockbox_pnl_1c"] = board["lockbox_pnl_1c"].fillna(np.nan)
+
+    # Canonical exposure counts from trades
+    if not trades.empty and "canonical_exposure_id" in trades.columns:
+        walk_trades = trades[trades["stage"] == "walk_forward"]
+        canon_counts = (
+            walk_trades.groupby("model_name")["canonical_exposure_id"].nunique().reset_index(name="canonical_exposures")
+        )
+        board = board.merge(canon_counts, on="model_name", how="left")
+    else:
+        board["canonical_exposures"] = np.nan
+
+    board["with_bucket"] = board["model_name"].str.endswith("__with_bucket")
+
+    # candidate_status logic
+    walk_pos = (board["pnl_1c"] > 0) & (board["pnl_2c"] > 0)
+    lock_pos = board["lockbox_pnl_1c"].notna() & (board["lockbox_pnl_1c"] > 0)
+    fold_ok = (board["folds_with_trades"] >= 4) & (board["folds_positive_1c"] >= 3)
+
+    board["candidate_status"] = np.select(
+        [
+            walk_pos & lock_pos & fold_ok,
+            walk_pos,
+        ],
+        ["candidate", "research_only"],
+        default="reject",
+    )
+    # Artifact risk: flag base models that fail when their with_bucket twin passes
+    base_names = board.loc[~board["with_bucket"], "model_name"].tolist()
+    bucket_passing = set(
+        board.loc[board["with_bucket"] & (board["pnl_1c"] > 0), "model_name"]
+        .str.replace("__with_bucket", "", regex=False)
+    )
+    base_failing = set(board.loc[~board["with_bucket"] & ~walk_pos, "model_name"])
+    artifact_risk_names = base_failing & bucket_passing
+    board.loc[board["model_name"].isin(artifact_risk_names), "candidate_status"] = "artifact_risk"
+
+    cols = [
+        "model_name", "with_bucket", "raw_trades", "canonical_exposures",
+        "win_rate", "avg_ask", "pnl_raw", "pnl_1c", "pnl_2c",
+        "folds_with_trades", "folds_positive_1c", "lockbox_pnl_1c", "candidate_status",
+    ]
+    return board[[c for c in cols if c in board.columns]].sort_values(
+        ["with_bucket", "pnl_1c"], ascending=[True, False]
+    )
+
+
+def bucket_artifact_check_table(model_metrics: pd.DataFrame) -> pd.DataFrame:
+    """Pair each base model with its __with_bucket twin; flag provenance artifacts.
+
+    artifact_flag = True  → no_bucket fails (pnl_1c <= 0) but with_bucket passes.
+    This indicates the model was relying on label provenance, not Dota/market signal.
+
+    Columns: base_model, no_bucket_pnl_1c, with_bucket_pnl_1c, delta_pnl_1c, artifact_flag.
+    """
+    if model_metrics.empty:
+        return pd.DataFrame()
+    walk = model_metrics[model_metrics["stage"] == "walk_forward"].copy()
+    agg = (
+        walk.groupby("model_name", as_index=False)
+        .agg(pnl_1c=("trade_total_pnl_slip_1c", "sum"), pnl_2c=("trade_total_pnl_slip_2c", "sum"))
+    )
+    base = agg[~agg["model_name"].str.endswith("__with_bucket")].copy()
+    bucket = agg[agg["model_name"].str.endswith("__with_bucket")].copy()
+    bucket["base_model"] = bucket["model_name"].str.replace("__with_bucket", "", regex=False)
+    merged = base.rename(columns={"model_name": "base_model", "pnl_1c": "no_bucket_pnl_1c", "pnl_2c": "no_bucket_pnl_2c"}).merge(
+        bucket[["base_model", "pnl_1c", "pnl_2c"]].rename(columns={"pnl_1c": "with_bucket_pnl_1c", "pnl_2c": "with_bucket_pnl_2c"}),
+        on="base_model",
+        how="outer",
+    )
+    merged["delta_pnl_1c"] = merged["with_bucket_pnl_1c"] - merged["no_bucket_pnl_1c"]
+    # artifact: no_bucket fails (<=0) but with_bucket passes (>0) AND delta is material (>0.02)
+    merged["artifact_flag"] = (
+        (merged["no_bucket_pnl_1c"].fillna(-1) <= 0)
+        & (merged["with_bucket_pnl_1c"].fillna(-1) > 0)
+        & (merged["delta_pnl_1c"].fillna(0) > 0.02)
+    )
+    cols = ["base_model", "no_bucket_pnl_1c", "with_bucket_pnl_1c", "delta_pnl_1c", "artifact_flag"]
+    return merged[[c for c in cols if c in merged.columns]].sort_values("delta_pnl_1c", ascending=False)
+
+
+def duplicate_exposure_impact_table(all_trades_before_dedupe: pd.DataFrame, trades_after_dedupe: pd.DataFrame) -> pd.DataFrame:
+    """Show how much PnL was removed by collapsing duplicate exposures.
+
+    Compares raw (all signals, not deduped) vs canonical-deduped trade counts and PnL.
+    Columns: model_name, raw_trade_count, canonical_trade_count, duplicate_exposures,
+             raw_pnl_1c, canonical_pnl_1c, pnl_removed_by_dedupe.
+    """
+    if all_trades_before_dedupe.empty or trades_after_dedupe.empty:
+        return pd.DataFrame()
+    walk_raw = all_trades_before_dedupe[all_trades_before_dedupe["stage"] == "walk_forward"]
+    walk_canon = trades_after_dedupe[trades_after_dedupe["stage"] == "walk_forward"]
+    raw_agg = (
+        walk_raw.groupby("model_name", as_index=False)
+        .agg(raw_trade_count=("pnl_slip_1c", "size"), raw_pnl_1c=("pnl_slip_1c", "sum"))
+    )
+    canon_agg = (
+        walk_canon.groupby("model_name", as_index=False)
+        .agg(canonical_trade_count=("pnl_slip_1c", "size"), canonical_pnl_1c=("pnl_slip_1c", "sum"))
+    )
+    merged = raw_agg.merge(canon_agg, on="model_name", how="outer")
+    merged["duplicate_exposures"] = merged["raw_trade_count"] - merged["canonical_trade_count"]
+    merged["pnl_removed_by_dedupe"] = merged["raw_pnl_1c"] - merged["canonical_pnl_1c"]
+    cols = [
+        "model_name", "raw_trade_count", "canonical_trade_count",
+        "duplicate_exposures", "raw_pnl_1c", "canonical_pnl_1c", "pnl_removed_by_dedupe",
+    ]
+    return merged[[c for c in cols if c in merged.columns]].sort_values("pnl_removed_by_dedupe", ascending=False)
+
+
+def instrument_provenance_diagnostic_table(frame: pd.DataFrame) -> pd.DataFrame:
+    """Per-canonical-exposure breakdown of instrument quality by provenance label.
+
+    For each canonical_exposure_id where multiple label_market_bucket values exist,
+    compares ask, bid, spread, and ask_size to identify which instrument had better
+    executable price. This supports execution routing, NOT strategy PnL splitting.
+
+    Columns: canonical_exposure_id, label_market_bucket, market_id, token_id,
+             ask, bid, spread, ask_size, selected_best_instrument.
+    """
+    if frame.empty or "canonical_exposure_id" not in frame.columns:
+        return pd.DataFrame()
+    tradable = frame[frame["tradable"]].copy()
+    if tradable.empty:
+        return pd.DataFrame()
+    # Take the first tradable snapshot per canonical exposure + label bucket
+    price_cols = ["canonical_exposure_id", "label_market_bucket", "market_id", "token_id",
+                  "book_best_ask", "book_best_bid", "book_spread", "book_ask_size"]
+    available = [c for c in price_cols if c in tradable.columns]
+    snap = (
+        tradable[available]
+        .sort_values(["canonical_exposure_id", "label_market_bucket", "book_best_ask"])
+        .drop_duplicates(["canonical_exposure_id", "label_market_bucket"], keep="first")
+        .copy()
+    )
+    snap = snap.rename(columns={
+        "book_best_ask": "ask",
+        "book_best_bid": "bid",
+        "book_spread": "spread",
+        "book_ask_size": "ask_size",
+    })
+    # Only keep canonical exposures that have multiple instrument sources
+    canon_counts = snap.groupby("canonical_exposure_id")["label_market_bucket"].nunique()
+    multi_source = canon_counts[canon_counts > 1].index
+    snap = snap[snap["canonical_exposure_id"].isin(multi_source)].copy()
+    if snap.empty:
+        return pd.DataFrame()
+    # Select best instrument = lowest ask, with size > 0
+    best = (
+        snap[snap["ask_size"] > 0]
+        .sort_values(["canonical_exposure_id", "ask"])
+        .drop_duplicates("canonical_exposure_id", keep="first")[["canonical_exposure_id", "label_market_bucket"]]
+        .rename(columns={"label_market_bucket": "_best_bucket"})
+    ) if "ask_size" in snap.columns else (
+        snap.sort_values(["canonical_exposure_id", "ask"])
+        .drop_duplicates("canonical_exposure_id", keep="first")[["canonical_exposure_id", "label_market_bucket"]]
+        .rename(columns={"label_market_bucket": "_best_bucket"})
+    )
+    snap = snap.merge(best, on="canonical_exposure_id", how="left")
+    snap["selected_best_instrument"] = snap["label_market_bucket"] == snap["_best_bucket"]
+    snap = snap.drop(columns=["_best_bucket"]).sort_values(["canonical_exposure_id", "ask"])
+    return snap
 
 
 def wilson_interval(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -1041,6 +1263,8 @@ def trade_output(frame: pd.DataFrame) -> pd.DataFrame:
         "model_version",
         "training_cutoff_match_time",
         "match_id",
+        "canonical_exposure_id",
+        "current_game_number",
         "market_id",
         "label_market_bucket",
         "token_id",
@@ -1245,6 +1469,9 @@ def build_report(
     transition_study: pd.DataFrame,
     folds: list[Fold],
     split: DatasetSplit,
+    candidate_board: pd.DataFrame,
+    artifact_check: pd.DataFrame,
+    dup_impact: pd.DataFrame,
 ) -> str:
     aggregate = aggregate_model_metrics(model_metrics)
     model_summary = model_summary_table(model_metrics, trades)
@@ -1258,6 +1485,7 @@ def build_report(
     )
     robust_residuals = residual_top[residual_top["robust_residual_bucket"]].copy() if "robust_residual_bucket" in residual_top.columns else pd.DataFrame()
     clv_60 = clv[clv["horizon_s"] == 60].sort_values(["avg_clv_bid", "matches"], ascending=[False, False])
+    provenance_diag = provenance_diagnostic_table(trades)
     fold_summary = pd.DataFrame(
         [
             {
@@ -1298,6 +1526,44 @@ def build_report(
         f"- Best lockbox ablation by 1c slippage PnL: `{acceptance['best_lock_model']}` ({signed(acceptance['best_lock_1c'])} / {signed(acceptance['best_lock_2c'])} after 1c/2c)",
         f"- Positive 60s future-bid CLV events with at least 3 matches: {acceptance['positive_clv_60_events']}",
         f"- Best 60s average future-bid CLV: {signed(acceptance['best_avg_clv_bid_60'])}",
+        "",
+        "## Candidate Board (Post-Fix, Canonical Dedupe)",
+        "",
+        "Pass conditions: walk positive 1c+2c, lockbox positive 1c+2c, folds_with_trades>=4, folds_positive_1c>=3.",
+        "artifact_risk: no_bucket version fails but __with_bucket twin passes — relying on label provenance.",
+        "",
+        markdown_table(
+            candidate_board,
+            [c for c in [
+                "model_name", "with_bucket", "raw_trades", "canonical_exposures",
+                "win_rate", "avg_ask", "pnl_raw", "pnl_1c", "pnl_2c",
+                "folds_with_trades", "folds_positive_1c", "lockbox_pnl_1c", "candidate_status",
+            ] if c in candidate_board.columns],
+            max_rows=60,
+        ),
+        "",
+        "## Bucket Artifact Check (No-Bucket vs With-Bucket)",
+        "",
+        "artifact_flag=True means the base (no-bucket) model fails but __with_bucket passes — downgrade that family.",
+        "",
+        markdown_table(
+            artifact_check,
+            [c for c in [
+                "base_model", "no_bucket_pnl_1c", "with_bucket_pnl_1c", "delta_pnl_1c", "artifact_flag",
+            ] if c in artifact_check.columns],
+        ),
+        "",
+        "## Duplicate Exposure Impact",
+        "",
+        "pnl_removed_by_dedupe: PnL that was present before canonical deduplication. If large, the strategy was double-counting equivalent contracts.",
+        "",
+        markdown_table(
+            dup_impact,
+            [c for c in [
+                "model_name", "raw_trade_count", "canonical_trade_count",
+                "duplicate_exposures", "raw_pnl_1c", "canonical_pnl_1c", "pnl_removed_by_dedupe",
+            ] if c in dup_impact.columns],
+        ),
         "",
         "## Market Calibration",
         "",
@@ -1516,6 +1782,10 @@ def build_report(
         f"- `{TRANSITION_EVENT_STUDY_PATH}`",
         f"- `{SUMMARY_PATH}`",
         f"- `{PROVENANCE_DIAGNOSTIC_PATH}`",
+        f"- `{CANDIDATE_BOARD_PATH}`",
+        f"- `{BUCKET_ARTIFACT_PATH}`",
+        f"- `{DUPLICATE_IMPACT_PATH}`",
+        f"- `{INSTRUMENT_DIAGNOSTIC_PATH}`",
     ]
     return "\n".join(lines) + "\n"
 
@@ -1523,11 +1793,15 @@ def build_report(
 def main() -> None:
     frame = load_analysis_frame()
     residuals = pd.concat([market_calibration_table(frame), residual_bucket_tables(frame)], ignore_index=True)
-    predictions, trades, thresholds, metrics, folds, split = run_market_anchor_walk_forward(frame)
+    predictions, trades, thresholds, metrics, folds, split, raw_trades = run_market_anchor_walk_forward(frame)
     clv = clv_event_study(frame)
     transition_study = transition_entry_event_study(frame)
     summary = model_summary_table(metrics, trades)
     provenance_diag = provenance_diagnostic_table(trades)
+    candidate_board = candidate_board_table(metrics, trades)
+    artifact_check = bucket_artifact_check_table(metrics)
+    dup_impact = duplicate_exposure_impact_table(raw_trades, trades)
+    instrument_diag = instrument_provenance_diagnostic_table(frame)
     residuals.to_csv(RESIDUALS_PATH, index=False)
     predictions.to_csv(PREDICTIONS_PATH, index=False)
     trades.to_csv(TRADES_PATH, index=False)
@@ -1535,7 +1809,14 @@ def main() -> None:
     transition_study.to_csv(TRANSITION_EVENT_STUDY_PATH, index=False)
     summary.to_csv(SUMMARY_PATH, index=False)
     provenance_diag.to_csv(PROVENANCE_DIAGNOSTIC_PATH, index=False)
-    REPORT_PATH.write_text(build_report(frame, residuals, predictions, trades, thresholds, metrics, clv, transition_study, folds, split))
+    candidate_board.to_csv(CANDIDATE_BOARD_PATH, index=False)
+    artifact_check.to_csv(BUCKET_ARTIFACT_PATH, index=False)
+    dup_impact.to_csv(DUPLICATE_IMPACT_PATH, index=False)
+    instrument_diag.to_csv(INSTRUMENT_DIAGNOSTIC_PATH, index=False)
+    REPORT_PATH.write_text(build_report(
+        frame, residuals, predictions, trades, thresholds, metrics, clv, transition_study, folds, split,
+        candidate_board, artifact_check, dup_impact,
+    ))
     print(f"Saved report: {REPORT_PATH}")
     print(f"Saved residuals: {RESIDUALS_PATH} ({len(residuals)} rows)")
     print(f"Saved predictions: {PREDICTIONS_PATH} ({len(predictions)} rows)")
@@ -1544,6 +1825,10 @@ def main() -> None:
     print(f"Saved transition event study: {TRANSITION_EVENT_STUDY_PATH} ({len(transition_study)} rows)")
     print(f"Saved summary: {SUMMARY_PATH} ({len(summary)} rows)")
     print(f"Saved provenance diagnostic: {PROVENANCE_DIAGNOSTIC_PATH} ({len(provenance_diag)} rows)")
+    print(f"Saved candidate board: {CANDIDATE_BOARD_PATH} ({len(candidate_board)} rows)")
+    print(f"Saved bucket artifact check: {BUCKET_ARTIFACT_PATH} ({len(artifact_check)} rows)")
+    print(f"Saved duplicate exposure impact: {DUPLICATE_IMPACT_PATH} ({len(dup_impact)} rows)")
+    print(f"Saved instrument provenance diagnostic: {INSTRUMENT_DIAGNOSTIC_PATH} ({len(instrument_diag)} rows)")
     print(aggregate_model_metrics(metrics).to_string(index=False))
 
 
