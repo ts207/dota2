@@ -9,7 +9,8 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from analyze_pattern import bit_count, clean_and_feature
+from analyze_pattern import clean_and_feature
+from dota2bot.side_features import add_base_state_features, side_from_signed
 
 
 PATTERN_PATH = Path("datasets/pattern_discovery_dataset/pattern_snapshots.parquet")
@@ -37,74 +38,9 @@ def money(value: float) -> str:
     return f"{value:+.4f}"
 
 
-def side_from_signed(series: pd.Series, threshold: float) -> pd.Series:
-    return pd.Series(
-        np.select([series >= threshold, series <= -threshold], ["radiant", "dire"], default=""),
-        index=series.index,
-    )
-
-
 def feature_executable_rows(rows: pd.DataFrame) -> pd.DataFrame:
     """Add the same state features used for discovery to executable side rows."""
-    frame = rows.copy()
-    frame["nw_lead_clean"] = frame["radiant_lead"].fillna(frame["net_worth_diff"])
-    frame["abs_nw_lead"] = frame["nw_lead_clean"].abs()
-    frame["score_diff"] = frame["radiant_score"] - frame["dire_score"]
-    frame["abs_score_diff"] = frame["score_diff"].abs()
-    frame["total_kills"] = frame["radiant_score"] + frame["dire_score"]
-    frame["nw_leader"] = side_from_signed(frame["nw_lead_clean"], 0.000001).replace("", "tied")
-    frame["kill_leader"] = side_from_signed(frame["score_diff"], 0.000001).replace("", "tied")
-    frame["leaders_agree"] = frame["nw_leader"] == frame["kill_leader"]
-
-    frame["towers_alive_radiant"] = frame["tower_state"].apply(lambda value: bit_count(value, range(0, 11)))
-    frame["towers_alive_dire"] = frame["tower_state"].apply(lambda value: bit_count(value, range(11, 22)))
-    frame["tower_advantage"] = frame["towers_alive_radiant"] - frame["towers_alive_dire"]
-
-    build_int = frame["building_state"].fillna(0).astype("int64").to_numpy()
-    for side, offsets in {"radiant": [0, 3, 6], "dire": [16, 19, 22]}.items():
-        lane_cols = []
-        for lane_num, offset in enumerate(offsets):
-            col = f"{side}_building_lane_{lane_num}_state"
-            frame[col] = np.where(
-                frame["building_state"].notna(),
-                ((build_int >> offset) & 0b111).astype("float64"),
-                np.nan,
-            )
-            lane_cols.append(col)
-        frame[f"{side}_rax_lanes_down"] = (frame[lane_cols] >= 4).sum(axis=1).astype("float64")
-        frame.loc[frame["building_state"].isna(), f"{side}_rax_lanes_down"] = np.nan
-
-    frame["rax_lane_advantage"] = frame["dire_rax_lanes_down"] - frame["radiant_rax_lanes_down"]
-
-    frame = frame.sort_values(["match_id", "label_market_bucket", "received_at_ns", "side"]).reset_index(drop=True)
-    frame["nw_change_100s"] = np.nan
-    frame["nw_change_300s"] = np.nan
-
-    # Compute momentum on unique game snapshots, then merge back to side-token rows.
-    key_cols = ["match_id", "received_at_ns", "game_time_sec"]
-    snap = (
-        frame.drop_duplicates(key_cols)
-        .sort_values(["match_id", "game_time_sec", "received_at_ns"])
-        [key_cols + ["nw_lead_clean"]]
-        .copy()
-    )
-    for seconds, out_col in [(100, "nw_change_100s"), (300, "nw_change_300s")]:
-        snap[out_col] = np.nan
-        for _, idx in snap.groupby("match_id").groups.items():
-            sub = snap.loc[idx].sort_values(["game_time_sec", "received_at_ns"])
-            times = sub["game_time_sec"].to_numpy(dtype=float)
-            values = sub["nw_lead_clean"].to_numpy(dtype=float)
-            pos = np.searchsorted(times, times - seconds, side="right") - 1
-            valid = pos >= 0
-            deltas = np.full(len(sub), np.nan)
-            deltas[valid] = values[valid] - values[pos[valid]]
-            snap.loc[sub.index, out_col] = deltas
-    frame = frame.drop(columns=["nw_change_100s", "nw_change_300s"]).merge(
-        snap[key_cols + ["nw_change_100s", "nw_change_300s"]],
-        on=key_cols,
-        how="left",
-    )
-    return frame
+    return add_base_state_features(rows)
 
 
 RULES = [

@@ -70,6 +70,18 @@ def test_side_features_require_min_game_time_for_research_tradability():
     assert featured.loc[featured["game_time_sec"] == 700, "tradable_research"].tolist() == [True]
 
 
+def test_side_features_handle_missing_tower_and_building_columns():
+    frame = _snapshot_frame([700]).drop(columns=["tower_state", "building_state"])
+
+    featured = add_side_features(frame, min_game_time_sec=600)
+
+    assert "side_tower" in featured.columns
+    assert "side_rax" in featured.columns
+    assert featured["side_tower"].isna().all()
+    assert featured["side_rax"].isna().all()
+    assert featured["tradable_research"].tolist() == [True]
+
+
 def test_trade_output_empty_uses_fixed_ledger_columns():
     out = trade_output(pd.DataFrame())
 

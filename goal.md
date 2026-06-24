@@ -1,366 +1,204 @@
+Current directive:
 
-Yes. Your instinct is right.
+> Use only the executable backtest dataset for strategy/model validation now.
+> Live logged data is for later forward validation, not for the current proof.
 
-You should **not trust the hand-selected strategies yet**. They were useful for hypothesis discovery, but the next serious step should be a **walk-forward model framework**, not hardcoding those rules as if they are already real alpha.
+## Active Scope
 
-The correct goal is:
-
-> Train only on past matches, predict future matches, compare model fair probability to executable ask, and measure forward EV fold by fold.
-
-## Why you should not trust the current strategies
-
-The current multifactor rules came from a large rule search. The script generates many variants across market buckets, edge thresholds, ask caps, net-worth thresholds, momentum thresholds, scoreboard lag thresholds, structure thresholds, and reversal conditions.
-
-That creates data-snooping risk:
+The active research source is:
 
 ```text
-many rules tested
-small samples
-best-looking rules selected
-reported results can be inflated
+datasets/clean_executable_backtest_dataset/clean_backtest_side_snapshots.parquet
 ```
 
-The report itself shows promising but small samples. Example: the top structure rule has only 11 test trades; the top momentum rule has 19 test trades.
-
-So yes: treat those as **hypotheses**, not strategies.
-
-## But do not “train once” either
-
-The model should not be trained once on one train/test split and trusted.
-
-Current model code uses a single chronological 60/40 match split:
+Do not consume these live-log datasets for the current strategy proof:
 
 ```text
-first 60% matches = train
-last 40% matches = test
+logs/live_side_snapshots
+logs/live_settled_side_snapshots
+logs/live_book_ticks
+logs/live_game_snapshots
+logs/strategy_decisions
 ```
 
-That is better than random splitting, but still not enough.
+Live logging, live settlement, and live audit code may remain in the repo, but they are not part of the active strategy-validation loop.
 
-You want **walk-forward validation**:
+## Goal
+
+Prove whether GetTopLive game-state features add tradable residual edge after controlling for Polymarket executable ask price, using only settled executable backtest rows.
+
+The current proof must answer:
 
 ```text
-Fold 1: train early matches       → test next block
-Fold 2: train early + block 1     → test next block
-Fold 3: train early + blocks 1-2  → test next block
-...
+1. Is the market broadly calibrated by ask bucket?
+2. At the same ask price, do GetTopLive state buckets separate winners from losers?
+3. Does a market-anchored model beat a market-only model in chronological walk-forward?
+4. Does the edge survive 1c and 2c slippage?
+5. Is there positive short-horizon executable future-bid CLV?
+6. Is PnL concentrated in one match, bucket, or league?
 ```
 
-The unit must be **match-level**, not row-level, because rows inside the same match are highly correlated.
+## Already Implemented
 
-## Correct model-first workflow
-
-Use this order:
+The repo now has:
 
 ```text
-1. Audit executable dataset
-2. Build side-relative features
-3. Build walk-forward model evaluator
-4. Train probability models fold by fold
-5. Convert model probability to trade decisions
-6. Compare model edge to rule edge
-7. Only then implement live paper logging
+dota2bot/side_features.py
+validate_pattern_strategies.py using shared side features
+market_residual_gettoplive_analysis.py
+market_residual_gettoplive_report.md
+price_bucket_state_residuals.csv
+market_anchor_model_predictions.csv
+market_anchor_model_trades.csv
+gettoplive_clv_event_study.csv
 ```
 
-So yes, model before runtime strategy deployment. But still audit first, because bad data makes any model useless.
-
-## The model objective
-
-The model should estimate:
+The residual analysis uses:
 
 ```text
-P(side token wins | game state at this timestamp)
+minimum game time: 600s
+chronological development / lockbox split
+walk-forward threshold selection
+first qualifying trade dedupe
+1c and 2c slippage accounting
+future executable bid/mid CLV
+residual bucket robustness gates
 ```
 
-Then trading edge is:
+## Current Verdict
+
+The current executable-backtest result is:
 
 ```text
-edge = model_prob - book_best_ask
+Settlement residual test: PASS
+Short-horizon future-bid CLV test: FAIL
 ```
 
-Expected value per share is approximately the same:
+Model comparison:
 
 ```text
-EV = model_prob - ask
+market_gettoplive_logistic beats market_only_logistic after 1c and 2c slippage
+market_momentum_logistic is the best current ablation by 1c-slippage PnL
+all positive-slippage model rows are research_only because Wilson lower bounds do not clear breakeven ask
 ```
 
-Trade only when:
+But this is still not deployment approval. The CLV result says the signal does not currently prove a short-horizon scalp. The only supported thesis is hold-to-settlement residual edge in the executable backtest.
+
+## Active Build Order
+
+### 1. Keep Research Backtest-Only
+
+Every current strategy/model command must read from:
 
 ```text
-model_prob - ask >= threshold
+datasets/clean_executable_backtest_dataset/clean_backtest_side_snapshots.parquet
 ```
 
-Example:
+Do not add or run:
 
 ```text
-model_prob = 0.74
-ask = 0.62
-edge = +0.12
+paper-log
+settle-decisions
+report-decisions
+runtime paper logger
+live decision loop
 ```
 
-That is the actual trading thesis.
+Those belong to a later phase after the backtest proof is stable.
 
-## Important: separate state model from price model
+### 2. Tighten Residual Analysis
 
-Your current research model includes features like:
+Continue improving:
 
 ```text
-book_best_ask
-state_prob_proxy
-state_edge_proxy
+market_residual_gettoplive_analysis.py
+market_residual_gettoplive_report.md
+price_bucket_state_residuals.csv
+market_anchor_model_predictions.csv
+market_anchor_model_trades.csv
+gettoplive_clv_event_study.csv
 ```
 
-inside `MODEL_FEATURES`.
-
-That is okay for a **trade classifier**, but not ideal for a clean fair-probability model.
-
-Build two models:
-
-### Model A — fair probability model
-
-Uses only game state:
+Required properties:
 
 ```text
-side_nw
-side_score
-side_mom_100
-side_mom_300
-side_tower
-side_rax
-game_time_sec
-total_kills
-seconds_since_state_change
-market bucket / map type if needed
+dedupe first trade per match / market bucket / model
+settlement-aware PnL
+1c and 2c slippage PnL
+future executable bid CLV, not theoretical mid-only CLV
+match-count gates on residual buckets
+concentration tables by match, market bucket, and league
+Wilson confidence intervals for small trade samples
 ```
 
-Output:
+### 3. Add A Compact Model Summary Artifact
+
+Create a small CSV summary so the result is machine-readable without parsing the markdown report:
 
 ```text
-fair_prob = P(side wins)
+market_anchor_model_summary.csv
 ```
 
-### Model B — trade/residual model
-
-Uses market features too:
+It should include, per model/stage:
 
 ```text
-fair_prob
-ask
-bid
-spread
-ask_size
-book_age_ms
-source_update_age_sec
-market bucket
-```
-
-Output:
-
-```text
-trade / no trade
-or expected pnl
-```
-
-Do **not** mix these concepts too early. First build the clean fair model.
-
-## What walk-forward should measure
-
-For each fold, report:
-
-```text
-AUC
-log loss
-Brier score
-calibration by probability bucket
-avg predicted probability
-realized win rate
-avg ask
-avg edge
-trade count
-win rate
-avg pnl/share
-total pnl
-max drawdown
-PnL after +1c slippage
-PnL after +2c slippage
-```
-
-The model is only useful if it is both:
-
-```text
-predictive: probabilities match outcomes
-tradable: model_prob > ask produces positive PnL
-```
-
-A high AUC alone is not enough.
-
-## Stronger validation design
-
-Use this split structure:
-
-```text
-Discovery / dev set:
-    Used to design features and model candidates.
-
-Walk-forward validation:
-    Used to compare models and thresholds.
-
-Final lockbox:
-    Never touched until the end.
-
-Live paper:
-    Forward-only proof.
-```
-
-The threshold must be selected inside each training fold, not on the test fold.
-
-Bad:
-
-```text
-Try thresholds on all data and report best.
-```
-
-Good:
-
-```text
-For each fold:
-    train model on past
-    choose threshold on train/validation past only
-    apply once to future test block
-```
-
-## What to build next instead of hardcoding rules
-
-Build:
-
-```text
-walk_forward_model_research.py
-```
-
-Outputs:
-
-```text
-walk_forward_model_report.md
-walk_forward_model_predictions.csv
-walk_forward_model_trades.csv
-```
-
-Core behavior:
-
-```text
-1. Load clean executable side snapshots
-2. Compute side-relative features
-3. Split by match chronology
-4. Train model on past folds
-5. Predict future fold
-6. Calibrate probabilities
-7. Generate trades where model_prob - ask >= threshold
-8. Deduplicate first trade per match + market bucket
-9. Score PnL
-10. Aggregate fold-level results
-```
-
-## Models to test first
-
-Use simple models first:
-
-```text
-logistic regression
-hist gradient boosting
-random forest
-LightGBM if stable
-XGBoost if stable
-```
-
-Do not start with deep learning. The dataset is likely too small and too correlated.
-
-Preferred baseline:
-
-```text
-LogisticRegression + calibration
-```
-
-Preferred nonlinear model:
-
-```text
-HistGradientBoostingClassifier or LightGBM
-```
-
-Then calibrate with:
-
-```text
-isotonic calibration
-or sigmoid/Platt calibration
-```
-
-## What to do with the existing rules
-
-Keep them as benchmarks only.
-
-Your comparison table should be:
-
-```text
-market baseline
-hand composite proxy
-top hand rules
-logistic fair-prob model
-gradient boosting fair-prob model
-residual trade model
-```
-
-If the model cannot beat the hand rules in walk-forward, do not deploy it.
-If the hand rules cannot beat the model, do not deploy the rules.
-If neither beats breakeven after slippage, do not trade.
-
-## Revised next milestone
-
-The next milestone should not be:
-
-```text
-implement top 2 strategies
-```
-
-It should be:
-
-```text
-build walk-forward model validation and prove whether any edge survives out-of-sample
-```
-
-Then, after that:
-
-```text
-paper-log should log model decisions, not just rule decisions
-```
-
-Minimum live decision fields should include:
-
-```text
+stage
 model_name
-model_version
-training_cutoff_match_time
-fair_prob
-calibrated_prob
-book_best_ask
-edge
-entry_threshold
-signal
-reason
-paper_entry_price
+folds
+pred_rows
+auc
+log_loss
+brier
+trade_trades
+trade_win_rate
+trade_avg_ask
+trade_total_pnl
+trade_total_pnl_slip_1c
+trade_total_pnl_slip_2c
+folds_with_trades
+folds_positive_1c
+folds_positive_2c
+verdict
 ```
 
-## Bottom line
-
-Yes: **do not trust those strategies yet**.
-
-The better plan is:
+Verdict rules:
 
 ```text
-audit executable data
-→ build walk-forward model framework
-→ train fair-probability model on past matches
-→ test on future matches
-→ compare model edge vs ask
-→ only then paper-log live model decisions
+candidate = positive 1c and 2c slippage PnL with trades across multiple folds and Wilson lower bound above breakeven ask
+research_only = positive settlement PnL but weak fold coverage or wide uncertainty
+reject = negative after slippage or no trades
 ```
 
-The hand strategies are useful as **baselines and sanity checks**, not as the main system.
+### 4. Do Not Promote To Live Yet
+
+Do not wire runtime paper decisions from live logs yet.
+
+The later live phase will be:
+
+```text
+read live side snapshots
+apply the frozen backtest-selected model/rule
+log decisions
+settle decisions
+compare forward paper performance to backtest expectations
+```
+
+That phase starts only after the executable-backtest candidate is frozen.
+
+## What Not To Do Now
+
+Do not mine live logs for alpha.
+
+Do not use live-settled rows as backtest evidence.
+
+Do not implement the live paper-decision loop yet.
+
+Do not deploy a model because lockbox PnL is positive on a small number of trades.
+
+Do not count repeated snapshots as independent evidence.
+
+Do not treat positive settlement PnL as proof of positive short-horizon CLV.
+
+## Immediate Next Step
+
+Add `market_anchor_model_summary.csv`, regenerate the executable-backtest artifacts, and rerun the test suite.
