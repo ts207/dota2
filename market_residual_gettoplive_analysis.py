@@ -15,6 +15,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from dota2bot.side_features import RESEARCH_MIN_GAME_TIME_SEC, add_side_features
+from dota2bot.transition_features import add_transition_features
 from walk_forward_model_research import (
     EDGE_THRESHOLDS,
     MIN_THRESHOLD_TRADES,
@@ -32,12 +33,14 @@ RESIDUALS_PATH = Path("price_bucket_state_residuals.csv")
 PREDICTIONS_PATH = Path("market_anchor_model_predictions.csv")
 TRADES_PATH = Path("market_anchor_model_trades.csv")
 CLV_PATH = Path("gettoplive_clv_event_study.csv")
+TRANSITION_EVENT_STUDY_PATH = Path("transition_entry_event_study.csv")
 SUMMARY_PATH = Path("market_anchor_model_summary.csv")
 
 MIN_GAME_TIME_SEC = RESEARCH_MIN_GAME_TIME_SEC
 FUTURE_PRICE_MAX_LAG_SEC = 20
 ROBUST_RESIDUAL_MIN_ROWS = 25
 ROBUST_RESIDUAL_MIN_MATCHES = 10
+MAX_CANDIDATE_CONCENTRATION_SHARE = 0.70
 
 MARKET_NUMERIC_FEATURES = [
     "logit_market_price",
@@ -48,6 +51,8 @@ MARKET_NUMERIC_FEATURES = [
 ]
 NW_FEATURES = ["side_nw"]
 MOMENTUM_FEATURES = ["side_mom_100", "side_mom_300"]
+KILL_MOMENTUM_FEATURES = ["side_kill_mom"]
+NW_KILL_MOMENTUM_FEATURES = ["side_mom_100", "side_mom_300", "side_kill_mom"]
 SCORE_FEATURES = [
     "side_score",
     "total_kills",
@@ -58,7 +63,37 @@ STRUCTURE_FEATURES = [
     "structure_score",
 ]
 STATE_NUMERIC_FEATURES = NW_FEATURES + MOMENTUM_FEATURES + SCORE_FEATURES + STRUCTURE_FEATURES
+TRANSITION_NW_FEATURES = [
+    "side_transition_nw_delta",
+    "side_transition_nw_per_sec",
+    "transition_dt_sec",
+    "nw_changed_without_score",
+    "score_nw_changed_together",
+    "nw_leads_score_sec",
+]
+TRANSITION_KILL_FEATURES = [
+    "side_transition_kill_delta",
+    "side_transition_score_delta",
+    "side_transition_kill_per_sec",
+    "transition_dt_sec",
+    "score_changed_without_nw",
+    "score_nw_changed_together",
+    "score_leads_nw_sec",
+]
+TRANSITION_NW_KILL_FEATURES = sorted(set(TRANSITION_NW_FEATURES + TRANSITION_KILL_FEATURES))
+TRANSITION_CATCHUP_FEATURES = [
+    "score_changed_without_nw",
+    "nw_changed_without_score",
+    "score_nw_changed_together",
+    "score_leads_nw_sec",
+    "nw_leads_score_sec",
+    "side_transition_nw_delta",
+    "side_transition_kill_delta",
+    "side_transition_nw_per_sec",
+    "side_transition_kill_per_sec",
+]
 CATEGORICAL_FEATURES = ["label_market_bucket"]
+TRANSITION_CATEGORICAL_FEATURES = ["label_market_bucket", "score_nw_lag_type", "transition_signal_type"]
 
 
 def pct(value: float) -> str:
@@ -74,7 +109,7 @@ def signed(value: float) -> str:
 
 
 def load_analysis_frame(path: Path = EXECUTABLE_PATH) -> pd.DataFrame:
-    frame = add_side_features(pd.read_parquet(path), min_game_time_sec=MIN_GAME_TIME_SEC)
+    frame = add_transition_features(add_side_features(pd.read_parquet(path), min_game_time_sec=MIN_GAME_TIME_SEC))
     frame["tradable"] = frame["tradable_research"]
     frame["market_prob"] = frame["book_best_ask"].clip(1e-6, 1 - 1e-6)
     frame["logit_market_price"] = np.log(frame["market_prob"] / (1 - frame["market_prob"]))
@@ -108,6 +143,23 @@ def add_residual_buckets(frame: pd.DataFrame) -> pd.DataFrame:
         bins=[-np.inf, -5000, -1000, 1000, 5000, np.inf],
         labels=["mom_lt_-5k", "mom_-5k_-1k", "mom_-1k_1k", "mom_1k_5k", "mom_ge_5k"],
     ).astype(str)
+    out["side_kill_mom_bucket"] = pd.cut(
+        out["side_kill_mom"],
+        bins=[-np.inf, -3, -1, 0, 2, np.inf],
+        labels=["kill_mom_le_-3", "kill_mom_-2_-1", "kill_mom_0", "kill_mom_1_2", "kill_mom_ge_3"],
+        include_lowest=True,
+    ).astype(str)
+    out["side_transition_kill_delta_bucket"] = pd.cut(
+        out["side_transition_kill_delta"],
+        bins=[-np.inf, -3, -1, 0, 2, np.inf],
+        labels=["transition_kill_le_-3", "transition_kill_-2_-1", "transition_kill_0", "transition_kill_1_2", "transition_kill_ge_3"],
+        include_lowest=True,
+    ).astype(str)
+    out["side_transition_nw_delta_bucket"] = pd.cut(
+        out["side_transition_nw_delta"],
+        bins=[-np.inf, -5000, -1000, 1000, 5000, np.inf],
+        labels=["transition_nw_le_-5k", "transition_nw_-5k_-1k", "transition_nw_-1k_1k", "transition_nw_1k_5k", "transition_nw_ge_5k"],
+    ).astype(str)
     out["side_score_bucket"] = pd.cut(
         out["side_score"],
         bins=[-np.inf, -6, -2, 2, 6, np.inf],
@@ -124,6 +176,10 @@ def add_residual_buckets(frame: pd.DataFrame) -> pd.DataFrame:
         labels=["0000_0600", "0600_0900", "0900_1200", "1200_1800", "1800_2400", "2400_plus"],
         include_lowest=True,
     ).astype(str)
+    for col in ["score_nw_lag_type", "transition_signal_type"]:
+        if col not in out.columns:
+            out[col] = "missing"
+        out[col] = out[col].fillna("missing").astype(str)
     return out
 
 
@@ -162,7 +218,18 @@ def market_calibration_table(frame: pd.DataFrame) -> pd.DataFrame:
 def residual_bucket_tables(frame: pd.DataFrame) -> pd.DataFrame:
     rows = []
     tradable = add_residual_buckets(frame[frame["tradable"]].copy())
-    for bucket_col in ["side_nw_bucket", "side_mom_100_bucket", "side_score_bucket", "structure_score_bucket", "game_time_bucket"]:
+    for bucket_col in [
+        "side_nw_bucket",
+        "side_mom_100_bucket",
+        "side_kill_mom_bucket",
+        "side_transition_kill_delta_bucket",
+        "side_transition_nw_delta_bucket",
+        "score_nw_lag_type",
+        "transition_signal_type",
+        "side_score_bucket",
+        "structure_score_bucket",
+        "game_time_bucket",
+    ]:
         for (ask_bucket, state_bucket), sub in tradable.groupby(["ask_bucket", bucket_col], observed=False):
             if sub.empty:
                 continue
@@ -204,7 +271,8 @@ def residual_bucket_tables(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def model_pipeline(numeric_features: list[str]) -> Pipeline:
+def model_pipeline(numeric_features: list[str], categorical_features: list[str] | None = None) -> Pipeline:
+    categorical_features = categorical_features or CATEGORICAL_FEATURES
     return Pipeline(
         [
             (
@@ -212,7 +280,7 @@ def model_pipeline(numeric_features: list[str]) -> Pipeline:
                 ColumnTransformer(
                     [
                         ("num", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scaler", StandardScaler())]), numeric_features),
-                        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), CATEGORICAL_FEATURES),
+                        ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_features),
                     ],
                     verbose_feature_names_out=False,
                 ),
@@ -233,6 +301,14 @@ def market_models() -> dict[str, tuple[Pipeline, list[str]]]:
             model_pipeline(MARKET_NUMERIC_FEATURES + MOMENTUM_FEATURES),
             MARKET_NUMERIC_FEATURES + MOMENTUM_FEATURES + CATEGORICAL_FEATURES,
         ),
+        "market_kill_momentum_logistic": (
+            model_pipeline(MARKET_NUMERIC_FEATURES + KILL_MOMENTUM_FEATURES),
+            MARKET_NUMERIC_FEATURES + KILL_MOMENTUM_FEATURES + CATEGORICAL_FEATURES,
+        ),
+        "market_nw_kill_momentum_logistic": (
+            model_pipeline(MARKET_NUMERIC_FEATURES + NW_KILL_MOMENTUM_FEATURES),
+            MARKET_NUMERIC_FEATURES + NW_KILL_MOMENTUM_FEATURES + CATEGORICAL_FEATURES,
+        ),
         "market_score_logistic": (
             model_pipeline(MARKET_NUMERIC_FEATURES + SCORE_FEATURES),
             MARKET_NUMERIC_FEATURES + SCORE_FEATURES + CATEGORICAL_FEATURES,
@@ -244,6 +320,22 @@ def market_models() -> dict[str, tuple[Pipeline, list[str]]]:
         "market_gettoplive_logistic": (
             model_pipeline(MARKET_NUMERIC_FEATURES + STATE_NUMERIC_FEATURES),
             MARKET_NUMERIC_FEATURES + STATE_NUMERIC_FEATURES + CATEGORICAL_FEATURES,
+        ),
+        "market_transition_nw_logistic": (
+            model_pipeline(MARKET_NUMERIC_FEATURES + TRANSITION_NW_FEATURES, TRANSITION_CATEGORICAL_FEATURES),
+            MARKET_NUMERIC_FEATURES + TRANSITION_NW_FEATURES + TRANSITION_CATEGORICAL_FEATURES,
+        ),
+        "market_transition_kill_logistic": (
+            model_pipeline(MARKET_NUMERIC_FEATURES + TRANSITION_KILL_FEATURES, TRANSITION_CATEGORICAL_FEATURES),
+            MARKET_NUMERIC_FEATURES + TRANSITION_KILL_FEATURES + TRANSITION_CATEGORICAL_FEATURES,
+        ),
+        "market_transition_nw_kill_logistic": (
+            model_pipeline(MARKET_NUMERIC_FEATURES + TRANSITION_NW_KILL_FEATURES, TRANSITION_CATEGORICAL_FEATURES),
+            MARKET_NUMERIC_FEATURES + TRANSITION_NW_KILL_FEATURES + TRANSITION_CATEGORICAL_FEATURES,
+        ),
+        "market_transition_catchup_logistic": (
+            model_pipeline(MARKET_NUMERIC_FEATURES + TRANSITION_CATCHUP_FEATURES, TRANSITION_CATEGORICAL_FEATURES),
+            MARKET_NUMERIC_FEATURES + TRANSITION_CATCHUP_FEATURES + TRANSITION_CATEGORICAL_FEATURES,
         ),
     }
 
@@ -545,6 +637,44 @@ def fold_robustness_table(model_metrics: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def concentration_gate_table(trades: pd.DataFrame | None) -> pd.DataFrame:
+    cols = [
+        "stage",
+        "model_name",
+        "max_match_pnl_1c_share",
+        "max_bucket_pnl_1c_share",
+        "max_league_pnl_1c_share",
+        "concentration_ok",
+    ]
+    if trades is None or trades.empty:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for (stage, model_name), sub in trades.groupby(["stage", "model_name"]):
+        row: dict[str, Any] = {"stage": stage, "model_name": model_name}
+        checks = []
+        for group_col, out_col in [
+            ("match_id", "max_match_pnl_1c_share"),
+            ("label_market_bucket", "max_bucket_pnl_1c_share"),
+            ("league_id", "max_league_pnl_1c_share"),
+        ]:
+            if group_col not in sub.columns:
+                row[out_col] = np.nan
+                checks.append(True)
+                continue
+            grouped = sub.groupby(group_col, dropna=False)["pnl_slip_1c"].sum()
+            positive = grouped[grouped > 0]
+            if positive.empty:
+                row[out_col] = np.nan
+                checks.append(False)
+                continue
+            share = positive.max() / positive.sum()
+            row[out_col] = float(share)
+            checks.append(len(positive) > 1 and share <= MAX_CANDIDATE_CONCENTRATION_SHARE)
+        row["concentration_ok"] = bool(all(checks))
+        rows.append(row)
+    return pd.DataFrame(rows, columns=cols)
+
+
 def model_summary_table(model_metrics: pd.DataFrame, trades: pd.DataFrame | None = None) -> pd.DataFrame:
     aggregate = aggregate_model_metrics(model_metrics)
     if aggregate.empty:
@@ -568,6 +698,9 @@ def model_summary_table(model_metrics: pd.DataFrame, trades: pd.DataFrame | None
                 "folds_positive_2c",
                 "win_rate_ci_low",
                 "win_rate_ci_high",
+                "max_match_pnl_1c_share",
+                "max_bucket_pnl_1c_share",
+                "max_league_pnl_1c_share",
                 "uncertainty_reason",
                 "verdict",
             ]
@@ -584,33 +717,46 @@ def model_summary_table(model_metrics: pd.DataFrame, trades: pd.DataFrame | None
     if trades is not None and not trades.empty:
         uncertainty = trade_uncertainty_table(trades)[["stage", "model_name", "win_rate_ci_low", "win_rate_ci_high"]]
         summary = summary.merge(uncertainty, on=["stage", "model_name"], how="left")
+        concentration = concentration_gate_table(trades)
+        summary = summary.merge(concentration, on=["stage", "model_name"], how="left")
     else:
         summary["win_rate_ci_low"] = np.nan
         summary["win_rate_ci_high"] = np.nan
+        summary["max_match_pnl_1c_share"] = np.nan
+        summary["max_bucket_pnl_1c_share"] = np.nan
+        summary["max_league_pnl_1c_share"] = np.nan
+        summary["concentration_ok"] = False
+    if "concentration_ok" not in summary.columns:
+        summary["concentration_ok"] = False
 
     positive_after_slip = (summary["trade_total_pnl_slip_1c"] > 0) & (summary["trade_total_pnl_slip_2c"] > 0) & (summary["trade_trades"] > 0)
     enough_fold_coverage = (
         (summary["stage"] == "walk_forward")
-        & (summary["folds_with_trades"] >= 2)
-        & (summary["folds_positive_1c"] >= 2)
-        & (summary["folds_positive_2c"] >= 2)
+        & (summary["folds_with_trades"] >= 4)
+        & (summary["folds_positive_1c"] >= 3)
+        & (summary["folds_positive_2c"] >= 3)
     )
     wide_uncertainty = summary["win_rate_ci_low"].isna() | (summary["win_rate_ci_low"] <= summary["trade_avg_ask"])
+    concentration_fail = ~summary["concentration_ok"].fillna(False).astype(bool)
     summary["uncertainty_reason"] = np.select(
         [
             summary["trade_trades"] == 0,
             summary["win_rate_ci_low"].isna(),
             wide_uncertainty,
+            ~enough_fold_coverage,
+            concentration_fail,
         ],
         [
             "no_trades",
             "not_measured",
             "ci_low_not_above_breakeven",
+            "insufficient_fold_support",
+            "concentrated_pnl",
         ],
         default="ci_low_above_breakeven",
     )
     summary["verdict"] = np.select(
-        [positive_after_slip & enough_fold_coverage & ~wide_uncertainty, positive_after_slip],
+        [positive_after_slip & enough_fold_coverage & ~wide_uncertainty & ~concentration_fail, positive_after_slip],
         ["candidate", "research_only"],
         default="reject",
     )
@@ -633,6 +779,9 @@ def model_summary_table(model_metrics: pd.DataFrame, trades: pd.DataFrame | None
         "folds_positive_2c",
         "win_rate_ci_low",
         "win_rate_ci_high",
+        "max_match_pnl_1c_share",
+        "max_bucket_pnl_1c_share",
+        "max_league_pnl_1c_share",
         "uncertainty_reason",
         "verdict",
     ]
@@ -723,10 +872,18 @@ def prediction_output(frame: pd.DataFrame) -> pd.DataFrame:
         "side_nw",
         "side_mom_100",
         "side_mom_300",
+        "side_kill_mom",
         "side_score",
         "side_tower",
         "side_rax",
         "structure_score",
+        "side_transition_nw_delta",
+        "side_transition_score_delta",
+        "side_transition_kill_delta",
+        "side_transition_nw_per_sec",
+        "side_transition_kill_per_sec",
+        "score_nw_lag_type",
+        "transition_signal_type",
     ]
     return frame[[c for c in cols if c in frame.columns]].copy()
 
@@ -762,8 +919,15 @@ def trade_output(frame: pd.DataFrame) -> pd.DataFrame:
         "pnl_slip_2c",
         "side_nw",
         "side_mom_100",
+        "side_mom_300",
+        "side_kill_mom",
         "side_score",
         "structure_score",
+        "side_transition_nw_delta",
+        "side_transition_score_delta",
+        "side_transition_kill_delta",
+        "score_nw_lag_type",
+        "transition_signal_type",
         "reason",
     ]
     if frame.empty:
@@ -860,6 +1024,50 @@ def clv_event_study(frame: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def transition_entry_event_study(frame: pd.DataFrame) -> pd.DataFrame:
+    priced = add_future_prices(frame[frame["tradable"]].copy())
+    events = {
+        "first_score_change": priced["score_changed_without_nw"].fillna(False).astype(bool),
+        "first_nw_change": priced["nw_changed_without_score"].fillna(False).astype(bool),
+        "score_nw_same_snapshot": priced["score_nw_changed_together"].fillna(False).astype(bool),
+        "score_then_nw_catchup": priced["score_nw_lag_type"].fillna("") == "score_then_nw",
+        "nw_then_score_catchup": priced["score_nw_lag_type"].fillna("") == "nw_then_score",
+        "confirmed_transition": priced["transition_signal_type"].fillna("") == "confirmed_transition",
+        "post_transition_close": priced["transition_signal_type"].fillna("") == "post_transition_close",
+    }
+    rows = []
+    for event_name, mask in events.items():
+        trades = first_trade_rows(priced[mask].copy())
+        row: dict[str, Any] = {
+            "entry_timing": event_name,
+            "trades": int(len(trades)),
+            "matches": int(trades["match_id"].nunique()) if not trades.empty else 0,
+            "avg_ask": float(trades["book_best_ask"].mean()) if not trades.empty else np.nan,
+            "settlement_win_rate": float(trades["settled_win"].mean()) if not trades.empty else np.nan,
+            "raw_pnl": float(trades["pnl_per_share"].sum()) if not trades.empty else 0.0,
+            "pnl_1c": float(trades["pnl_slip_1c"].sum()) if not trades.empty else 0.0,
+            "pnl_2c": float(trades["pnl_slip_2c"].sum()) if not trades.empty else 0.0,
+        }
+        for horizon in [15, 30, 60, 120]:
+            if trades.empty or f"future_bid_{horizon}s" not in trades.columns:
+                row[f"future_bid_clv_{horizon}s"] = np.nan
+                continue
+            clv_rows = trades[trades[f"future_bid_{horizon}s"].notna()].copy()
+            if clv_rows.empty:
+                row[f"future_bid_clv_{horizon}s"] = np.nan
+            else:
+                row[f"future_bid_clv_{horizon}s"] = float((clv_rows[f"future_bid_{horizon}s"] - clv_rows["book_best_ask"]).mean())
+        if trades.empty or "future_bid_60s" not in trades.columns:
+            row["positive_bid_clv_rate"] = np.nan
+        else:
+            clv_60 = trades[trades["future_bid_60s"].notna()].copy()
+            row["positive_bid_clv_rate"] = (
+                float(((clv_60["future_bid_60s"] - clv_60["book_best_ask"]) > 0).mean()) if not clv_60.empty else np.nan
+            )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def markdown_table(df: pd.DataFrame, cols: list[str], max_rows: int | None = None) -> str:
     if df.empty:
         return "_No rows._"
@@ -889,6 +1097,7 @@ def build_report(
     thresholds: pd.DataFrame,
     model_metrics: pd.DataFrame,
     clv: pd.DataFrame,
+    transition_study: pd.DataFrame,
     folds: list[Fold],
     split: DatasetSplit,
 ) -> str:
@@ -1071,6 +1280,27 @@ def build_report(
         "",
         markdown_table(clv_60, ["event", "rows", "matches", "avg_ask", "avg_clv_mid", "avg_clv_bid", "avg_future_delay_s", "positive_bid_clv_rate"]),
         "",
+        "## Transition Entry-Timing Event Study",
+        "",
+        markdown_table(
+            transition_study.sort_values(["pnl_1c", "trades"], ascending=[False, False]),
+            [
+                "entry_timing",
+                "trades",
+                "matches",
+                "avg_ask",
+                "settlement_win_rate",
+                "raw_pnl",
+                "pnl_1c",
+                "pnl_2c",
+                "future_bid_clv_15s",
+                "future_bid_clv_30s",
+                "future_bid_clv_60s",
+                "future_bid_clv_120s",
+                "positive_bid_clv_rate",
+            ],
+        ),
+        "",
         "## Trade PnL Concentration",
         "",
         "By market bucket:",
@@ -1119,6 +1349,7 @@ def build_report(
         f"- `{PREDICTIONS_PATH}`",
         f"- `{TRADES_PATH}`",
         f"- `{CLV_PATH}`",
+        f"- `{TRANSITION_EVENT_STUDY_PATH}`",
         f"- `{SUMMARY_PATH}`",
     ]
     return "\n".join(lines) + "\n"
@@ -1129,18 +1360,21 @@ def main() -> None:
     residuals = pd.concat([market_calibration_table(frame), residual_bucket_tables(frame)], ignore_index=True)
     predictions, trades, thresholds, metrics, folds, split = run_market_anchor_walk_forward(frame)
     clv = clv_event_study(frame)
+    transition_study = transition_entry_event_study(frame)
     summary = model_summary_table(metrics, trades)
     residuals.to_csv(RESIDUALS_PATH, index=False)
     predictions.to_csv(PREDICTIONS_PATH, index=False)
     trades.to_csv(TRADES_PATH, index=False)
     clv.to_csv(CLV_PATH, index=False)
+    transition_study.to_csv(TRANSITION_EVENT_STUDY_PATH, index=False)
     summary.to_csv(SUMMARY_PATH, index=False)
-    REPORT_PATH.write_text(build_report(frame, residuals, predictions, trades, thresholds, metrics, clv, folds, split))
+    REPORT_PATH.write_text(build_report(frame, residuals, predictions, trades, thresholds, metrics, clv, transition_study, folds, split))
     print(f"Saved report: {REPORT_PATH}")
     print(f"Saved residuals: {RESIDUALS_PATH} ({len(residuals)} rows)")
     print(f"Saved predictions: {PREDICTIONS_PATH} ({len(predictions)} rows)")
     print(f"Saved trades: {TRADES_PATH} ({len(trades)} rows)")
     print(f"Saved CLV study: {CLV_PATH} ({len(clv)} rows)")
+    print(f"Saved transition event study: {TRANSITION_EVENT_STUDY_PATH} ({len(transition_study)} rows)")
     print(f"Saved summary: {SUMMARY_PATH} ({len(summary)} rows)")
     print(aggregate_model_metrics(metrics).to_string(index=False))
 
