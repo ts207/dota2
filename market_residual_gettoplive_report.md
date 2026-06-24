@@ -31,32 +31,32 @@ Scope: executable backtest side snapshots only. This report tests whether GetTop
 Pass conditions: walk positive 1c+2c, lockbox positive 1c+2c, folds_with_trades>=4, folds_positive_1c>=3.
 artifact_risk: no_bucket version fails but __with_bucket twin passes — relying on label provenance.
 
-| model_name | with_bucket | raw_trades | canonical_exposures | win_rate | avg_ask | pnl_raw | pnl_1c | pnl_2c | folds_with_trades | folds_positive_1c | lockbox_pnl_1c | candidate_status |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| market_nw_kill_momentum_logistic | False | 19 | n/a | 68.9% | 0.445 | +5.2000 | +5.0100 | +4.8200 | 4 | 4 | +1.5400 | candidate |
-| market_momentum_logistic | False | 24 | n/a | 72.0% | 0.485 | +4.6400 | +4.4000 | +4.1600 | 5 | 5 | +2.3200 | candidate |
-| market_gettoplive_logistic | False | 20 | n/a | 66.4% | 0.541 | +2.4700 | +2.2700 | +2.0700 | 4 | 3 | +2.9000 | candidate |
-| market_nw_logistic | False | 18 | n/a | 63.3% | 0.559 | +1.2300 | +1.0500 | +0.8700 | 4 | 3 | +2.7100 | candidate |
-| market_score_logistic | False | 28 | n/a | 57.8% | 0.559 | +1.0900 | +0.8100 | +0.5300 | 5 | 3 | +1.0600 | candidate |
-| market_transition_kill_logistic | False | 25 | n/a | 67.7% | 0.540 | +1.0400 | +0.7900 | +0.5400 | 5 | 4 | +0.3300 | candidate |
-| market_kill_momentum_logistic | False | 25 | n/a | 54.2% | 0.510 | +0.9500 | +0.7000 | +0.4500 | 4 | 2 | +0.2300 | research_only |
-| market_transition_nw_logistic | False | 30 | n/a | 59.4% | 0.554 | +0.4100 | +0.1100 | -0.1900 | 5 | 2 | +2.0600 | artifact_risk |
-| market_transition_nw_kill_logistic | False | 28 | n/a | 54.4% | 0.514 | -0.1900 | -0.4700 | -0.7500 | 5 | 3 | +1.0300 | artifact_risk |
-| market_only_logistic | False | 8 | n/a | 62.5% | 0.681 | -0.4500 | -0.5300 | -0.6100 | 1 | 0 | +0.0000 | reject |
-| market_transition_catchup_logistic | False | 28 | n/a | 56.9% | 0.546 | -0.2700 | -0.5500 | -0.8300 | 5 | 3 | +2.1100 | artifact_risk |
-| market_structure_logistic | False | 10 | n/a | 47.9% | 0.599 | -1.0600 | -1.1600 | -1.2600 | 4 | 0 | +1.0100 | reject |
-| market_nw_kill_momentum_logistic__with_bucket | True | 20 | n/a | 64.8% | 0.446 | +4.6600 | +4.4600 | +4.2600 | 4 | 3 | +2.7000 | candidate |
-| market_momentum_logistic__with_bucket | True | 25 | n/a | 69.4% | 0.511 | +3.3000 | +3.0500 | +2.8000 | 5 | 5 | +3.3100 | candidate |
-| market_gettoplive_logistic__with_bucket | True | 20 | n/a | 66.4% | 0.544 | +2.4800 | +2.2800 | +2.0800 | 4 | 3 | +2.8200 | candidate |
-| market_nw_logistic__with_bucket | True | 22 | n/a | 64.2% | 0.536 | +2.0500 | +1.8300 | +1.6100 | 4 | 4 | +1.6600 | candidate |
-| market_transition_nw_kill_logistic__with_bucket | True | 36 | n/a | 64.2% | 0.553 | +2.1000 | +1.7400 | +1.3800 | 5 | 4 | +2.4200 | candidate |
-| market_transition_catchup_logistic__with_bucket | True | 32 | n/a | 65.4% | 0.576 | +1.6900 | +1.3700 | +1.0500 | 5 | 4 | +1.6100 | candidate |
-| market_score_logistic__with_bucket | True | 27 | n/a | 57.7% | 0.542 | +0.7800 | +0.5100 | +0.2400 | 5 | 3 | +0.5800 | candidate |
-| market_transition_nw_logistic__with_bucket | True | 29 | n/a | 63.3% | 0.567 | +0.7800 | +0.4900 | +0.2000 | 5 | 3 | +1.4600 | candidate |
-| market_transition_kill_logistic__with_bucket | True | 24 | n/a | 59.6% | 0.552 | +0.3500 | +0.1100 | -0.1300 | 5 | 4 | +0.5600 | reject |
-| market_kill_momentum_logistic__with_bucket | True | 22 | n/a | 54.4% | 0.542 | +0.0300 | -0.1900 | -0.4100 | 4 | 1 | +0.4800 | reject |
-| market_only_logistic__with_bucket | True | 7 | n/a | 71.4% | 0.767 | -0.3700 | -0.4400 | -0.5100 | 1 | 0 | +0.0000 | reject |
-| market_structure_logistic__with_bucket | True | 12 | n/a | 43.8% | 0.570 | -1.5400 | -1.6600 | -1.7800 | 4 | 0 | +0.5000 | reject |
+| model_name | with_bucket | raw_trades | canonical_exposures | win_rate | avg_ask | pnl_raw | pnl_1c | pnl_2c | folds_with_trades | folds_positive_1c | lockbox_pnl_1c | uncertainty_reason | candidate_status |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| market_nw_kill_momentum_logistic | False | 19 | 19 | 68.9% | 0.445 | +5.2000 | +5.0100 | +4.8200 | 4 | 4 | +1.5400 | concentrated_pnl | research_only |
+| market_momentum_logistic | False | 24 | 24 | 72.0% | 0.485 | +4.6400 | +4.4000 | +4.1600 | 5 | 5 | +2.3200 | ci_low_not_above_breakeven | research_only |
+| market_gettoplive_logistic | False | 20 | 20 | 66.4% | 0.541 | +2.4700 | +2.2700 | +2.0700 | 4 | 3 | +2.9000 | ci_low_not_above_breakeven | research_only |
+| market_nw_logistic | False | 18 | 18 | 63.3% | 0.559 | +1.2300 | +1.0500 | +0.8700 | 4 | 3 | +2.7100 | ci_low_not_above_breakeven | research_only |
+| market_score_logistic | False | 28 | 28 | 57.8% | 0.559 | +1.0900 | +0.8100 | +0.5300 | 5 | 3 | +1.0600 | ci_low_not_above_breakeven | research_only |
+| market_transition_kill_logistic | False | 25 | 25 | 67.7% | 0.540 | +1.0400 | +0.7900 | +0.5400 | 5 | 4 | +0.3300 | ci_low_not_above_breakeven | research_only |
+| market_kill_momentum_logistic | False | 25 | 25 | 54.2% | 0.510 | +0.9500 | +0.7000 | +0.4500 | 4 | 2 | +0.2300 | ci_low_not_above_breakeven | research_only |
+| market_transition_nw_logistic | False | 30 | 30 | 59.4% | 0.554 | +0.4100 | +0.1100 | -0.1900 | 5 | 2 | +2.0600 | ci_low_not_above_breakeven | artifact_risk |
+| market_transition_nw_kill_logistic | False | 28 | 28 | 54.4% | 0.514 | -0.1900 | -0.4700 | -0.7500 | 5 | 3 | +1.0300 | ci_low_not_above_breakeven | artifact_risk |
+| market_only_logistic | False | 8 | 8 | 62.5% | 0.681 | -0.4500 | -0.5300 | -0.6100 | 1 | 0 | +0.0000 | ci_low_not_above_breakeven | reject |
+| market_transition_catchup_logistic | False | 28 | 28 | 56.9% | 0.546 | -0.2700 | -0.5500 | -0.8300 | 5 | 3 | +2.1100 | ci_low_not_above_breakeven | artifact_risk |
+| market_structure_logistic | False | 10 | 10 | 47.9% | 0.599 | -1.0600 | -1.1600 | -1.2600 | 4 | 0 | +1.0100 | ci_low_not_above_breakeven | reject |
+| market_nw_kill_momentum_logistic__with_bucket | True | 20 | 20 | 64.8% | 0.446 | +4.6600 | +4.4600 | +4.2600 | 4 | 3 | +2.7000 | concentrated_pnl | research_only |
+| market_momentum_logistic__with_bucket | True | 25 | 25 | 69.4% | 0.511 | +3.3000 | +3.0500 | +2.8000 | 5 | 5 | +3.3100 | ci_low_not_above_breakeven | research_only |
+| market_gettoplive_logistic__with_bucket | True | 20 | 20 | 66.4% | 0.544 | +2.4800 | +2.2800 | +2.0800 | 4 | 3 | +2.8200 | ci_low_not_above_breakeven | research_only |
+| market_nw_logistic__with_bucket | True | 22 | 22 | 64.2% | 0.536 | +2.0500 | +1.8300 | +1.6100 | 4 | 4 | +1.6600 | ci_low_not_above_breakeven | research_only |
+| market_transition_nw_kill_logistic__with_bucket | True | 36 | 36 | 64.2% | 0.553 | +2.1000 | +1.7400 | +1.3800 | 5 | 4 | +2.4200 | ci_low_not_above_breakeven | research_only |
+| market_transition_catchup_logistic__with_bucket | True | 32 | 32 | 65.4% | 0.576 | +1.6900 | +1.3700 | +1.0500 | 5 | 4 | +1.6100 | ci_low_not_above_breakeven | research_only |
+| market_score_logistic__with_bucket | True | 27 | 27 | 57.7% | 0.542 | +0.7800 | +0.5100 | +0.2400 | 5 | 3 | +0.5800 | ci_low_not_above_breakeven | research_only |
+| market_transition_nw_logistic__with_bucket | True | 29 | 29 | 63.3% | 0.567 | +0.7800 | +0.4900 | +0.2000 | 5 | 3 | +1.4600 | ci_low_not_above_breakeven | research_only |
+| market_transition_kill_logistic__with_bucket | True | 24 | 24 | 59.6% | 0.552 | +0.3500 | +0.1100 | -0.1300 | 5 | 4 | +0.5600 | ci_low_not_above_breakeven | reject |
+| market_kill_momentum_logistic__with_bucket | True | 22 | 22 | 54.4% | 0.542 | +0.0300 | -0.1900 | -0.4100 | 4 | 1 | +0.4800 | ci_low_not_above_breakeven | reject |
+| market_only_logistic__with_bucket | True | 7 | 7 | 71.4% | 0.767 | -0.3700 | -0.4400 | -0.5100 | 1 | 0 | +0.0000 | ci_low_not_above_breakeven | reject |
+| market_structure_logistic__with_bucket | True | 12 | 12 | 43.8% | 0.570 | -1.5400 | -1.6600 | -1.7800 | 4 | 0 | +0.5000 | ci_low_not_above_breakeven | reject |
 
 ## Bucket Artifact Check (No-Bucket vs With-Bucket)
 
@@ -107,6 +107,369 @@ pnl_removed_by_dedupe: PnL that was present before canonical deduplication. If l
 | market_kill_momentum_logistic__with_bucket | 144 | 22 | 122 | +0.3800 | -0.1900 | +0.5700 |
 | market_transition_nw_kill_logistic__with_bucket | 103 | 36 | 67 | +2.2700 | +1.7400 | +0.5300 |
 | market_transition_kill_logistic__with_bucket | 74 | 24 | 50 | +0.0600 | +0.1100 | -0.0500 |
+
+## Candidate Overlap Matrix
+
+Pairwise overlap uses canonical exposures, so map-equivalent contracts are counted once.
+
+| model_name | other_model_name | model_exposures | other_exposures | overlap_exposures | jaccard_overlap | pct_model_overlapped | pct_other_overlapped |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| market_nw_kill_momentum_logistic | market_nw_kill_momentum_logistic | 19 | 19 | 19 | 1.000 | 1.000 | 1.000 |
+| market_nw_kill_momentum_logistic | market_momentum_logistic | 19 | 24 | 19 | 0.792 | 1.000 | 0.792 |
+| market_nw_kill_momentum_logistic | market_gettoplive_logistic | 19 | 20 | 18 | 0.857 | 0.947 | 0.900 |
+| market_nw_kill_momentum_logistic | market_nw_logistic | 19 | 18 | 12 | 0.480 | 0.632 | 0.667 |
+| market_nw_kill_momentum_logistic | market_score_logistic | 19 | 28 | 15 | 0.469 | 0.789 | 0.536 |
+| market_nw_kill_momentum_logistic | market_transition_kill_logistic | 19 | 25 | 10 | 0.294 | 0.526 | 0.400 |
+| market_nw_kill_momentum_logistic | market_kill_momentum_logistic | 19 | 25 | 10 | 0.294 | 0.526 | 0.400 |
+| market_nw_kill_momentum_logistic | market_transition_nw_kill_logistic | 19 | 28 | 12 | 0.343 | 0.632 | 0.429 |
+| market_nw_kill_momentum_logistic | market_transition_catchup_logistic | 19 | 28 | 12 | 0.343 | 0.632 | 0.429 |
+| market_momentum_logistic | market_nw_kill_momentum_logistic | 24 | 19 | 19 | 0.792 | 0.792 | 1.000 |
+| market_momentum_logistic | market_momentum_logistic | 24 | 24 | 24 | 1.000 | 1.000 | 1.000 |
+| market_momentum_logistic | market_gettoplive_logistic | 24 | 20 | 19 | 0.760 | 0.792 | 0.950 |
+| market_momentum_logistic | market_nw_logistic | 24 | 18 | 13 | 0.448 | 0.542 | 0.722 |
+| market_momentum_logistic | market_score_logistic | 24 | 28 | 17 | 0.486 | 0.708 | 0.607 |
+| market_momentum_logistic | market_transition_kill_logistic | 24 | 25 | 15 | 0.441 | 0.625 | 0.600 |
+| market_momentum_logistic | market_kill_momentum_logistic | 24 | 25 | 11 | 0.289 | 0.458 | 0.440 |
+| market_momentum_logistic | market_transition_nw_kill_logistic | 24 | 28 | 17 | 0.486 | 0.708 | 0.607 |
+| market_momentum_logistic | market_transition_catchup_logistic | 24 | 28 | 17 | 0.486 | 0.708 | 0.607 |
+| market_gettoplive_logistic | market_nw_kill_momentum_logistic | 20 | 19 | 18 | 0.857 | 0.900 | 0.947 |
+| market_gettoplive_logistic | market_momentum_logistic | 20 | 24 | 19 | 0.760 | 0.950 | 0.792 |
+| market_gettoplive_logistic | market_gettoplive_logistic | 20 | 20 | 20 | 1.000 | 1.000 | 1.000 |
+| market_gettoplive_logistic | market_nw_logistic | 20 | 18 | 14 | 0.583 | 0.700 | 0.778 |
+| market_gettoplive_logistic | market_score_logistic | 20 | 28 | 16 | 0.500 | 0.800 | 0.571 |
+| market_gettoplive_logistic | market_transition_kill_logistic | 20 | 25 | 11 | 0.324 | 0.550 | 0.440 |
+| market_gettoplive_logistic | market_kill_momentum_logistic | 20 | 25 | 10 | 0.286 | 0.500 | 0.400 |
+| market_gettoplive_logistic | market_transition_nw_kill_logistic | 20 | 28 | 13 | 0.371 | 0.650 | 0.464 |
+| market_gettoplive_logistic | market_transition_catchup_logistic | 20 | 28 | 13 | 0.371 | 0.650 | 0.464 |
+| market_nw_logistic | market_nw_kill_momentum_logistic | 18 | 19 | 12 | 0.480 | 0.667 | 0.632 |
+| market_nw_logistic | market_momentum_logistic | 18 | 24 | 13 | 0.448 | 0.722 | 0.542 |
+| market_nw_logistic | market_gettoplive_logistic | 18 | 20 | 14 | 0.583 | 0.778 | 0.700 |
+| market_nw_logistic | market_nw_logistic | 18 | 18 | 18 | 1.000 | 1.000 | 1.000 |
+| market_nw_logistic | market_score_logistic | 18 | 28 | 13 | 0.394 | 0.722 | 0.464 |
+| market_nw_logistic | market_transition_kill_logistic | 18 | 25 | 5 | 0.132 | 0.278 | 0.200 |
+| market_nw_logistic | market_kill_momentum_logistic | 18 | 25 | 9 | 0.265 | 0.500 | 0.360 |
+| market_nw_logistic | market_transition_nw_kill_logistic | 18 | 28 | 8 | 0.211 | 0.444 | 0.286 |
+| market_nw_logistic | market_transition_catchup_logistic | 18 | 28 | 8 | 0.211 | 0.444 | 0.286 |
+| market_score_logistic | market_nw_kill_momentum_logistic | 28 | 19 | 15 | 0.469 | 0.536 | 0.789 |
+| market_score_logistic | market_momentum_logistic | 28 | 24 | 17 | 0.486 | 0.607 | 0.708 |
+| market_score_logistic | market_gettoplive_logistic | 28 | 20 | 16 | 0.500 | 0.571 | 0.800 |
+| market_score_logistic | market_nw_logistic | 28 | 18 | 13 | 0.394 | 0.464 | 0.722 |
+| market_score_logistic | market_score_logistic | 28 | 28 | 28 | 1.000 | 1.000 | 1.000 |
+| market_score_logistic | market_transition_kill_logistic | 28 | 25 | 16 | 0.432 | 0.571 | 0.640 |
+| market_score_logistic | market_kill_momentum_logistic | 28 | 25 | 16 | 0.432 | 0.571 | 0.640 |
+| market_score_logistic | market_transition_nw_kill_logistic | 28 | 28 | 17 | 0.436 | 0.607 | 0.607 |
+| market_score_logistic | market_transition_catchup_logistic | 28 | 28 | 16 | 0.400 | 0.571 | 0.571 |
+| market_transition_kill_logistic | market_nw_kill_momentum_logistic | 25 | 19 | 10 | 0.294 | 0.400 | 0.526 |
+| market_transition_kill_logistic | market_momentum_logistic | 25 | 24 | 15 | 0.441 | 0.600 | 0.625 |
+| market_transition_kill_logistic | market_gettoplive_logistic | 25 | 20 | 11 | 0.324 | 0.440 | 0.550 |
+| market_transition_kill_logistic | market_nw_logistic | 25 | 18 | 5 | 0.132 | 0.200 | 0.278 |
+| market_transition_kill_logistic | market_score_logistic | 25 | 28 | 16 | 0.432 | 0.640 | 0.571 |
+| market_transition_kill_logistic | market_transition_kill_logistic | 25 | 25 | 25 | 1.000 | 1.000 | 1.000 |
+| market_transition_kill_logistic | market_kill_momentum_logistic | 25 | 25 | 11 | 0.282 | 0.440 | 0.440 |
+| market_transition_kill_logistic | market_transition_nw_kill_logistic | 25 | 28 | 23 | 0.767 | 0.920 | 0.821 |
+| market_transition_kill_logistic | market_transition_catchup_logistic | 25 | 28 | 22 | 0.710 | 0.880 | 0.786 |
+| market_kill_momentum_logistic | market_nw_kill_momentum_logistic | 25 | 19 | 10 | 0.294 | 0.400 | 0.526 |
+| market_kill_momentum_logistic | market_momentum_logistic | 25 | 24 | 11 | 0.289 | 0.440 | 0.458 |
+| market_kill_momentum_logistic | market_gettoplive_logistic | 25 | 20 | 10 | 0.286 | 0.400 | 0.500 |
+| market_kill_momentum_logistic | market_nw_logistic | 25 | 18 | 9 | 0.265 | 0.360 | 0.500 |
+| market_kill_momentum_logistic | market_score_logistic | 25 | 28 | 16 | 0.432 | 0.640 | 0.571 |
+| market_kill_momentum_logistic | market_transition_kill_logistic | 25 | 25 | 11 | 0.282 | 0.440 | 0.440 |
+| market_kill_momentum_logistic | market_kill_momentum_logistic | 25 | 25 | 25 | 1.000 | 1.000 | 1.000 |
+| market_kill_momentum_logistic | market_transition_nw_kill_logistic | 25 | 28 | 12 | 0.293 | 0.480 | 0.429 |
+| market_kill_momentum_logistic | market_transition_catchup_logistic | 25 | 28 | 12 | 0.293 | 0.480 | 0.429 |
+| market_transition_nw_kill_logistic | market_nw_kill_momentum_logistic | 28 | 19 | 12 | 0.343 | 0.429 | 0.632 |
+| market_transition_nw_kill_logistic | market_momentum_logistic | 28 | 24 | 17 | 0.486 | 0.607 | 0.708 |
+| market_transition_nw_kill_logistic | market_gettoplive_logistic | 28 | 20 | 13 | 0.371 | 0.464 | 0.650 |
+| market_transition_nw_kill_logistic | market_nw_logistic | 28 | 18 | 8 | 0.211 | 0.286 | 0.444 |
+| market_transition_nw_kill_logistic | market_score_logistic | 28 | 28 | 17 | 0.436 | 0.607 | 0.607 |
+| market_transition_nw_kill_logistic | market_transition_kill_logistic | 28 | 25 | 23 | 0.767 | 0.821 | 0.920 |
+| market_transition_nw_kill_logistic | market_kill_momentum_logistic | 28 | 25 | 12 | 0.293 | 0.429 | 0.480 |
+| market_transition_nw_kill_logistic | market_transition_nw_kill_logistic | 28 | 28 | 28 | 1.000 | 1.000 | 1.000 |
+| market_transition_nw_kill_logistic | market_transition_catchup_logistic | 28 | 28 | 27 | 0.931 | 0.964 | 0.964 |
+| market_transition_catchup_logistic | market_nw_kill_momentum_logistic | 28 | 19 | 12 | 0.343 | 0.429 | 0.632 |
+| market_transition_catchup_logistic | market_momentum_logistic | 28 | 24 | 17 | 0.486 | 0.607 | 0.708 |
+| market_transition_catchup_logistic | market_gettoplive_logistic | 28 | 20 | 13 | 0.371 | 0.464 | 0.650 |
+| market_transition_catchup_logistic | market_nw_logistic | 28 | 18 | 8 | 0.211 | 0.286 | 0.444 |
+| market_transition_catchup_logistic | market_score_logistic | 28 | 28 | 16 | 0.400 | 0.571 | 0.571 |
+| market_transition_catchup_logistic | market_transition_kill_logistic | 28 | 25 | 22 | 0.710 | 0.786 | 0.880 |
+| market_transition_catchup_logistic | market_kill_momentum_logistic | 28 | 25 | 12 | 0.293 | 0.429 | 0.480 |
+| market_transition_catchup_logistic | market_transition_nw_kill_logistic | 28 | 28 | 27 | 0.931 | 0.964 | 0.964 |
+| market_transition_catchup_logistic | market_transition_catchup_logistic | 28 | 28 | 28 | 1.000 | 1.000 | 1.000 |
+
+## Threshold Robustness
+
+Aggregated validation threshold-search results by model/threshold. This is not lockbox PnL.
+
+| model_name | threshold | folds | total_trades | folds_with_trades | folds_positive_1c | folds_positive_2c | total_pnl | total_pnl_slip_1c | total_pnl_slip_2c |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| market_gettoplive_logistic | 0.100 | 5 | 24 | 5 | 5 | 5 | +3.7400 | +3.5000 | +3.2600 |
+| market_gettoplive_logistic | 0.120 | 5 | 18 | 5 | 4 | 4 | +3.2100 | +3.0300 | +2.8500 |
+| market_gettoplive_logistic | 0.150 | 5 | 15 | 5 | 4 | 4 | +3.0200 | +2.8700 | +2.7200 |
+| market_gettoplive_logistic | 0.080 | 5 | 29 | 5 | 4 | 4 | +2.0600 | +1.7700 | +1.4800 |
+| market_gettoplive_logistic | 0.200 | 5 | 8 | 4 | 2 | 2 | +0.4300 | +0.3500 | +0.2700 |
+| market_gettoplive_logistic | 0.050 | 5 | 42 | 5 | 2 | 2 | -0.5300 | -0.9500 | -1.3700 |
+| market_gettoplive_logistic | 0.020 | 5 | 63 | 5 | 1 | 1 | -1.6300 | -2.2600 | -2.8900 |
+| market_kill_momentum_logistic | 0.020 | 5 | 44 | 5 | 3 | 2 | +0.5600 | +0.1200 | -0.3200 |
+| market_kill_momentum_logistic | 0.120 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_kill_momentum_logistic | 0.150 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_kill_momentum_logistic | 0.200 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_kill_momentum_logistic | 0.100 | 5 | 2 | 1 | 0 | 0 | -0.7800 | -0.8000 | -0.8200 |
+| market_kill_momentum_logistic | 0.050 | 5 | 6 | 2 | 0 | 0 | -0.8100 | -0.8700 | -0.9300 |
+| market_kill_momentum_logistic | 0.080 | 5 | 3 | 1 | 0 | 0 | -0.8800 | -0.9100 | -0.9400 |
+| market_momentum_logistic | 0.120 | 5 | 21 | 5 | 5 | 5 | +3.6100 | +3.4000 | +3.1900 |
+| market_momentum_logistic | 0.100 | 5 | 25 | 5 | 5 | 5 | +3.1800 | +2.9300 | +2.6800 |
+| market_momentum_logistic | 0.050 | 5 | 40 | 5 | 4 | 4 | +2.5600 | +2.1600 | +1.7600 |
+| market_momentum_logistic | 0.080 | 5 | 30 | 5 | 5 | 5 | +2.2200 | +1.9200 | +1.6200 |
+| market_momentum_logistic | 0.150 | 5 | 16 | 4 | 4 | 4 | +1.8000 | +1.6400 | +1.4800 |
+| market_momentum_logistic | 0.200 | 5 | 8 | 4 | 2 | 2 | +0.6400 | +0.5600 | +0.4800 |
+| market_momentum_logistic | 0.020 | 5 | 58 | 5 | 2 | 2 | +0.3800 | -0.2000 | -0.7800 |
+| market_nw_kill_momentum_logistic | 0.100 | 5 | 24 | 5 | 5 | 5 | +4.0300 | +3.7900 | +3.5500 |
+| market_nw_kill_momentum_logistic | 0.120 | 5 | 24 | 5 | 5 | 5 | +3.5500 | +3.3100 | +3.0700 |
+| market_nw_kill_momentum_logistic | 0.080 | 5 | 32 | 5 | 5 | 4 | +2.7600 | +2.4400 | +2.1200 |
+| market_nw_kill_momentum_logistic | 0.150 | 5 | 19 | 4 | 3 | 3 | +1.0900 | +0.9000 | +0.7100 |
+| market_nw_kill_momentum_logistic | 0.200 | 5 | 7 | 4 | 2 | 2 | +0.3600 | +0.2900 | +0.2200 |
+| market_nw_kill_momentum_logistic | 0.050 | 5 | 44 | 5 | 2 | 2 | +0.7300 | +0.2900 | -0.1500 |
+| market_nw_kill_momentum_logistic | 0.020 | 5 | 70 | 5 | 2 | 1 | +0.0000 | -0.7000 | -1.4000 |
+| market_nw_logistic | 0.120 | 5 | 12 | 5 | 5 | 5 | +3.3000 | +3.1800 | +3.0600 |
+| market_nw_logistic | 0.100 | 5 | 16 | 5 | 5 | 5 | +3.1400 | +2.9800 | +2.8200 |
+| market_nw_logistic | 0.150 | 5 | 10 | 5 | 5 | 5 | +2.6900 | +2.5900 | +2.4900 |
+| market_nw_logistic | 0.050 | 5 | 32 | 5 | 3 | 3 | +1.9800 | +1.6600 | +1.3400 |
+| market_nw_logistic | 0.080 | 5 | 22 | 5 | 4 | 4 | +1.7300 | +1.5100 | +1.2900 |
+| market_nw_logistic | 0.200 | 5 | 3 | 3 | 1 | 1 | +0.3400 | +0.3100 | +0.2800 |
+| market_nw_logistic | 0.020 | 5 | 61 | 5 | 1 | 0 | -1.9400 | -2.5500 | -3.1600 |
+| market_score_logistic | 0.050 | 5 | 9 | 5 | 4 | 4 | +1.9300 | +1.8400 | +1.7500 |
+| market_score_logistic | 0.080 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_score_logistic | 0.100 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_score_logistic | 0.120 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_score_logistic | 0.150 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_score_logistic | 0.200 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_score_logistic | 0.020 | 5 | 46 | 5 | 1 | 0 | -2.0400 | -2.5000 | -2.9600 |
+| market_transition_catchup_logistic | 0.080 | 5 | 19 | 3 | 2 | 2 | +0.1800 | -0.0100 | -0.2000 |
+| market_transition_catchup_logistic | 0.050 | 5 | 33 | 5 | 2 | 2 | +0.2700 | -0.0600 | -0.3900 |
+| market_transition_catchup_logistic | 0.200 | 5 | 1 | 1 | 0 | 0 | -0.2500 | -0.2600 | -0.2700 |
+| market_transition_catchup_logistic | 0.150 | 5 | 5 | 2 | 0 | 0 | -0.7700 | -0.8200 | -0.8700 |
+| market_transition_catchup_logistic | 0.120 | 5 | 10 | 2 | 1 | 1 | -0.7500 | -0.8500 | -0.9500 |
+| market_transition_catchup_logistic | 0.100 | 5 | 16 | 2 | 0 | 0 | -0.9000 | -1.0600 | -1.2200 |
+| market_transition_catchup_logistic | 0.020 | 5 | 63 | 5 | 2 | 2 | -0.4500 | -1.0800 | -1.7100 |
+| market_transition_kill_logistic | 0.200 | 5 | 0 | 0 | 0 | 0 | +0.0000 | +0.0000 | +0.0000 |
+| market_transition_kill_logistic | 0.150 | 5 | 4 | 2 | 1 | 1 | -0.5800 | -0.6200 | -0.6600 |
+| market_transition_kill_logistic | 0.120 | 5 | 6 | 2 | 0 | 0 | -0.9500 | -1.0100 | -1.0700 |
+| market_transition_kill_logistic | 0.080 | 5 | 11 | 2 | 0 | 0 | -1.4600 | -1.5700 | -1.6800 |
+| market_transition_kill_logistic | 0.100 | 5 | 11 | 2 | 0 | 0 | -1.4600 | -1.5700 | -1.6800 |
+| market_transition_kill_logistic | 0.050 | 5 | 20 | 5 | 0 | 0 | -2.6100 | -2.8100 | -3.0100 |
+| market_transition_kill_logistic | 0.020 | 5 | 60 | 5 | 0 | 0 | -3.5800 | -4.1800 | -4.7800 |
+| market_transition_nw_kill_logistic | 0.080 | 5 | 21 | 4 | 2 | 2 | +0.4500 | +0.2400 | +0.0300 |
+| market_transition_nw_kill_logistic | 0.200 | 5 | 1 | 1 | 0 | 0 | -0.2500 | -0.2600 | -0.2700 |
+| market_transition_nw_kill_logistic | 0.050 | 5 | 35 | 5 | 1 | 1 | -0.4000 | -0.7500 | -1.1000 |
+| market_transition_nw_kill_logistic | 0.150 | 5 | 5 | 2 | 0 | 0 | -0.7800 | -0.8300 | -0.8800 |
+| market_transition_nw_kill_logistic | 0.120 | 5 | 10 | 2 | 1 | 1 | -0.7500 | -0.8500 | -0.9500 |
+| market_transition_nw_kill_logistic | 0.100 | 5 | 15 | 2 | 0 | 0 | -1.1000 | -1.2500 | -1.4000 |
+| market_transition_nw_kill_logistic | 0.020 | 5 | 63 | 5 | 0 | 0 | -2.5200 | -3.1500 | -3.7800 |
+
+## Match-Level Bootstrap
+
+Bootstrap resamples match-level 1c-slippage PnL with replacement. Low prob_positive means the edge is fragile across matches.
+
+| model_name | trades | matches | observed_pnl_1c | bootstrap_mean_pnl_1c | bootstrap_p05_pnl_1c | bootstrap_p50_pnl_1c | bootstrap_p95_pnl_1c | prob_positive_pnl_1c |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| market_nw_kill_momentum_logistic | 19 | 16 | +5.0100 | +5.0270 | +2.3095 | +5.0000 | +7.7100 | +0.9985 |
+| market_momentum_logistic | 24 | 18 | +4.4000 | +4.4265 | +2.1200 | +4.3700 | +6.8610 | +0.9985 |
+| market_gettoplive_logistic | 20 | 16 | +2.2700 | +2.2459 | -0.6310 | +2.2800 | +5.2105 | +0.9020 |
+| market_nw_logistic | 18 | 16 | +1.0500 | +1.0595 | -1.8600 | +1.1000 | +3.8705 | +0.7255 |
+| market_score_logistic | 28 | 21 | +0.8100 | +0.8838 | -2.1800 | +0.9400 | +3.7205 | +0.6930 |
+| market_transition_kill_logistic | 25 | 16 | +0.7900 | +0.8020 | -0.8505 | +0.8200 | +2.3900 | +0.7890 |
+| market_kill_momentum_logistic | 25 | 18 | +0.7000 | +0.7513 | -1.4105 | +0.7700 | +2.8905 | +0.7065 |
+| market_transition_nw_kill_logistic | 28 | 19 | -0.4700 | -0.4669 | -2.5005 | -0.4300 | +1.4700 | +0.3555 |
+| market_transition_catchup_logistic | 28 | 18 | -0.5500 | -0.5234 | -2.4700 | -0.5250 | +1.3410 | +0.3230 |
+
+## Canonical Exposure Concentration
+
+Largest canonical exposure contributors by absolute 1c PnL.
+
+| model_name | canonical_exposure_id | match_id | current_game_number | side | settled_win | avg_ask | pnl_1c | positive_pnl_share |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| market_gettoplive_logistic | 8835490699::MAPEQUIV::YES | 8835490699 |  | YES | False | 0.760 | -0.7700 | +0.0000 |
+| market_gettoplive_logistic | 8835609186::MAPEQUIV::NO | 8835609186 |  | NO | True | 0.260 | +0.7300 | +0.1390 |
+| market_gettoplive_logistic | 8836220468::MAPEQUIV::NO | 8836220468 |  | NO | False | 0.660 | -0.6700 | +0.0000 |
+| market_gettoplive_logistic | 8835703860::1::YES | 8835703860 | 1 | YES | True | 0.350 | +0.6400 | +0.1219 |
+| market_gettoplive_logistic | 8834932746::3::YES | 8834932746 | 3 | YES | True | 0.440 | +0.5500 | +0.1048 |
+| market_gettoplive_logistic | 8836485094::MAPEQUIV::NO | 8836485094 |  | NO | False | 0.500 | -0.5100 | +0.0000 |
+| market_gettoplive_logistic | 8835373075::MAPEQUIV::NO | 8835373075 |  | NO | False | 0.470 | -0.4800 | +0.0000 |
+| market_gettoplive_logistic | 8835609186::MAPEQUIV::YES | 8835609186 |  | YES | False | 0.460 | -0.4700 | +0.0000 |
+| market_gettoplive_logistic | 8836485118::MAPEQUIV::YES | 8836485118 |  | YES | True | 0.530 | +0.4600 | +0.0876 |
+| market_gettoplive_logistic | 8836442480::MAPEQUIV::YES | 8836442480 |  | YES | True | 0.550 | +0.4400 | +0.0838 |
+| market_gettoplive_logistic | 8836292316::MAPEQUIV::YES | 8836292316 |  | YES | True | 0.590 | +0.4000 | +0.0762 |
+| market_gettoplive_logistic | 8836624153::3::NO | 8836624153 | 3 | NO | True | 0.610 | +0.3800 | +0.0724 |
+| market_gettoplive_logistic | 8836692392::3::YES | 8836692392 | 3 | YES | True | 0.650 | +0.3400 | +0.0648 |
+| market_gettoplive_logistic | 8835703860::MAPEQUIV::YES | 8835703860 |  | YES | True | 0.670 | +0.3200 | +0.0610 |
+| market_gettoplive_logistic | 8834230023::3::NO | 8834230023 | 3 | NO | True | 0.680 | +0.3100 | +0.0590 |
+| market_gettoplive_logistic | 8835818773::MAPEQUIV::NO | 8835818773 |  | NO | True | 0.760 | +0.2300 | +0.0438 |
+| market_gettoplive_logistic | 8835490699::MAPEQUIV::NO | 8835490699 |  | NO | True | 0.800 | +0.1900 | +0.0362 |
+| market_gettoplive_logistic | 8836485094::MAPEQUIV::YES | 8836485094 |  | YES | True | 0.840 | +0.1500 | +0.0286 |
+| market_gettoplive_logistic | 8836445371::MAPEQUIV::NO | 8836445371 |  | NO | True | 0.880 | +0.1100 | +0.0210 |
+| market_gettoplive_logistic | 8833592202::3::NO | 8833592202 | 3 | NO | False | 0.070 | -0.0800 | +0.0000 |
+| market_kill_momentum_logistic | 8835703860::MAPEQUIV::NO | 8835703860 |  | NO | False | 0.760 | -0.7700 | +0.0000 |
+| market_kill_momentum_logistic | 8836583316::MAPEQUIV::YES | 8836583316 |  | YES | False | 0.690 | -0.7000 | +0.0000 |
+| market_kill_momentum_logistic | 8836624153::3::YES | 8836624153 | 3 | YES | False | 0.560 | -0.5700 | +0.0000 |
+| market_kill_momentum_logistic | 8836485118::MAPEQUIV::NO | 8836485118 |  | NO | False | 0.530 | -0.5400 | +0.0000 |
+| market_kill_momentum_logistic | 8831927547::MAPEQUIV::YES | 8831927547 |  | YES | False | 0.500 | -0.5100 | +0.0000 |
+| market_kill_momentum_logistic | 8836485118::MAPEQUIV::YES | 8836485118 |  | YES | True | 0.510 | +0.4800 | +0.0990 |
+| market_kill_momentum_logistic | 8832812084::MAPEQUIV::NO | 8832812084 |  | NO | True | 0.520 | +0.4700 | +0.0969 |
+| market_kill_momentum_logistic | 8836692392::3::YES | 8836692392 | 3 | YES | True | 0.520 | +0.4700 | +0.0969 |
+| market_kill_momentum_logistic | 8836442480::MAPEQUIV::YES | 8836442480 |  | YES | True | 0.540 | +0.4500 | +0.0928 |
+| market_kill_momentum_logistic | 8831927547::MAPEQUIV::NO | 8831927547 |  | NO | True | 0.560 | +0.4300 | +0.0887 |
+| market_kill_momentum_logistic | 8835818773::MAPEQUIV::NO | 8835818773 |  | NO | True | 0.580 | +0.4100 | +0.0845 |
+| market_kill_momentum_logistic | 8836624153::3::NO | 8836624153 | 3 | NO | True | 0.610 | +0.3800 | +0.0784 |
+| market_kill_momentum_logistic | 8834230023::3::YES | 8834230023 | 3 | YES | False | 0.340 | -0.3500 | +0.0000 |
+| market_kill_momentum_logistic | 8835960490::MAPEQUIV::NO | 8835960490 |  | NO | True | 0.650 | +0.3400 | +0.0701 |
+| market_kill_momentum_logistic | 8836292316::MAPEQUIV::YES | 8836292316 |  | YES | True | 0.650 | +0.3400 | +0.0701 |
+| market_kill_momentum_logistic | 8834230023::3::NO | 8834230023 | 3 | NO | True | 0.680 | +0.3100 | +0.0639 |
+| market_kill_momentum_logistic | 8835703860::MAPEQUIV::YES | 8835703860 |  | YES | True | 0.700 | +0.2900 | +0.0598 |
+| market_kill_momentum_logistic | 8832889451::MAPEQUIV::YES | 8832889451 |  | YES | False | 0.190 | -0.2000 | +0.0000 |
+| market_kill_momentum_logistic | 8832889451::MAPEQUIV::NO | 8832889451 |  | NO | True | 0.790 | +0.2000 | +0.0412 |
+| market_kill_momentum_logistic | 8832812084::MAPEQUIV::YES | 8832812084 |  | YES | False | 0.170 | -0.1800 | +0.0000 |
+| market_kill_momentum_logistic | 8835728100::MAPEQUIV::NO | 8835728100 |  | NO | True | 0.810 | +0.1800 | +0.0371 |
+| market_kill_momentum_logistic | 8833492242::MAPEQUIV::YES | 8833492242 |  | YES | False | 0.130 | -0.1400 | +0.0000 |
+| market_kill_momentum_logistic | 8833592202::3::NO | 8833592202 | 3 | NO | False | 0.110 | -0.1200 | +0.0000 |
+| market_kill_momentum_logistic | 8836485094::MAPEQUIV::YES | 8836485094 |  | YES | True | 0.890 | +0.1000 | +0.0206 |
+| market_kill_momentum_logistic | 8833327581::3::NO | 8833327581 | 3 | NO | False | 0.060 | -0.0700 | +0.0000 |
+| market_momentum_logistic | 8835490699::MAPEQUIV::NO | 8835490699 |  | NO | True | 0.110 | +0.8800 | +0.1184 |
+| market_momentum_logistic | 8835490699::MAPEQUIV::YES | 8835490699 |  | YES | False | 0.680 | -0.6900 | +0.0000 |
+| market_momentum_logistic | 8835703860::1::YES | 8835703860 | 1 | YES | True | 0.350 | +0.6400 | +0.0861 |
+| market_momentum_logistic | 8835609186::MAPEQUIV::NO | 8835609186 |  | NO | True | 0.390 | +0.6000 | +0.0808 |
+| market_momentum_logistic | 8836583316::MAPEQUIV::NO | 8836583316 |  | NO | True | 0.430 | +0.5600 | +0.0754 |
+| market_momentum_logistic | 8834932746::3::YES | 8834932746 | 3 | YES | True | 0.440 | +0.5500 | +0.0740 |
+| market_momentum_logistic | 8834932746::3::NO | 8834932746 | 3 | NO | False | 0.520 | -0.5300 | +0.0000 |
+| market_momentum_logistic | 8836485094::MAPEQUIV::NO | 8836485094 |  | NO | False | 0.500 | -0.5100 | +0.0000 |
+| market_momentum_logistic | 8835703860::MAPEQUIV::YES | 8835703860 |  | YES | True | 0.500 | +0.4900 | +0.0659 |
+| market_momentum_logistic | 8835609186::MAPEQUIV::YES | 8835609186 |  | YES | False | 0.460 | -0.4700 | +0.0000 |
+| market_momentum_logistic | 8836692392::3::YES | 8836692392 | 3 | YES | True | 0.520 | +0.4700 | +0.0633 |
+| market_momentum_logistic | 8836485118::MAPEQUIV::YES | 8836485118 |  | YES | True | 0.530 | +0.4600 | +0.0619 |
+| market_momentum_logistic | 8836442480::MAPEQUIV::YES | 8836442480 |  | YES | True | 0.550 | +0.4400 | +0.0592 |
+| market_momentum_logistic | 8836220468::MAPEQUIV::NO | 8836220468 |  | NO | False | 0.420 | -0.4300 | +0.0000 |
+| market_momentum_logistic | 8832812084::MAPEQUIV::NO | 8832812084 |  | NO | True | 0.580 | +0.4100 | +0.0552 |
+| market_momentum_logistic | 8836292316::MAPEQUIV::YES | 8836292316 |  | YES | True | 0.590 | +0.4000 | +0.0538 |
+| market_momentum_logistic | 8835818773::MAPEQUIV::NO | 8835818773 |  | NO | True | 0.600 | +0.3900 | +0.0525 |
+| market_momentum_logistic | 8836624153::3::NO | 8836624153 | 3 | NO | True | 0.610 | +0.3800 | +0.0511 |
+| market_momentum_logistic | 8836485094::MAPEQUIV::YES | 8836485094 |  | YES | True | 0.640 | +0.3500 | +0.0471 |
+| market_momentum_logistic | 8834230023::3::NO | 8834230023 | 3 | NO | True | 0.680 | +0.3100 | +0.0417 |
+| market_momentum_logistic | 8835428935::MAPEQUIV::NO | 8835428935 |  | NO | False | 0.160 | -0.1700 | +0.0000 |
+| market_momentum_logistic | 8833592202::3::NO | 8833592202 | 3 | NO | False | 0.110 | -0.1200 | +0.0000 |
+| market_momentum_logistic | 8835373075::MAPEQUIV::NO | 8835373075 |  | NO | False | 0.100 | -0.1100 | +0.0000 |
+| market_momentum_logistic | 8835428935::MAPEQUIV::YES | 8835428935 |  | YES | True | 0.890 | +0.1000 | +0.0135 |
+| market_nw_kill_momentum_logistic | 8835609186::MAPEQUIV::NO | 8835609186 |  | NO | True | 0.260 | +0.7300 | +0.1053 |
+| market_nw_kill_momentum_logistic | 8835490699::MAPEQUIV::NO | 8835490699 |  | NO | True | 0.330 | +0.6600 | +0.0952 |
+| market_nw_kill_momentum_logistic | 8835703860::1::YES | 8835703860 | 1 | YES | True | 0.350 | +0.6400 | +0.0924 |
+| market_nw_kill_momentum_logistic | 8835703860::MAPEQUIV::YES | 8835703860 |  | YES | True | 0.370 | +0.6200 | +0.0895 |
+| market_nw_kill_momentum_logistic | 8836583316::MAPEQUIV::NO | 8836583316 |  | NO | True | 0.430 | +0.5600 | +0.0808 |
+| market_nw_kill_momentum_logistic | 8834932746::3::YES | 8834932746 | 3 | YES | True | 0.460 | +0.5300 | +0.0765 |
+| market_nw_kill_momentum_logistic | 8835609186::MAPEQUIV::YES | 8835609186 |  | YES | False | 0.500 | -0.5100 | +0.0000 |
+| market_nw_kill_momentum_logistic | 8836485094::MAPEQUIV::NO | 8836485094 |  | NO | False | 0.500 | -0.5100 | +0.0000 |
+| market_nw_kill_momentum_logistic | 8836485118::MAPEQUIV::YES | 8836485118 |  | YES | True | 0.520 | +0.4700 | +0.0678 |
+| market_nw_kill_momentum_logistic | 8836692392::3::YES | 8836692392 | 3 | YES | True | 0.520 | +0.4700 | +0.0678 |
+| market_nw_kill_momentum_logistic | 8836442480::MAPEQUIV::YES | 8836442480 |  | YES | True | 0.550 | +0.4400 | +0.0635 |
+
+## Live/Backtest Feature Parity
+
+Schema/code-contract check only. This does not read live logs.
+
+| model_name | feature | source | available_for_live_paper | uses_label_market_bucket |
+| --- | --- | --- | --- | --- |
+| market_nw_kill_momentum_logistic | logit_market_price | derived_side_features | True | False |
+| market_nw_kill_momentum_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_nw_kill_momentum_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_nw_kill_momentum_logistic | book_age_s | derived_side_features | True | False |
+| market_nw_kill_momentum_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_nw_kill_momentum_logistic | side_mom_100 | derived_side_features | True | False |
+| market_nw_kill_momentum_logistic | side_mom_300 | derived_side_features | True | False |
+| market_nw_kill_momentum_logistic | side_kill_mom | derived_side_features | True | False |
+| market_momentum_logistic | logit_market_price | derived_side_features | True | False |
+| market_momentum_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_momentum_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_momentum_logistic | book_age_s | derived_side_features | True | False |
+| market_momentum_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_momentum_logistic | side_mom_100 | derived_side_features | True | False |
+| market_momentum_logistic | side_mom_300 | derived_side_features | True | False |
+| market_gettoplive_logistic | logit_market_price | derived_side_features | True | False |
+| market_gettoplive_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_gettoplive_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_gettoplive_logistic | book_age_s | derived_side_features | True | False |
+| market_gettoplive_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_gettoplive_logistic | side_nw | derived_side_features | True | False |
+| market_gettoplive_logistic | side_mom_100 | derived_side_features | True | False |
+| market_gettoplive_logistic | side_mom_300 | derived_side_features | True | False |
+| market_gettoplive_logistic | side_score | derived_side_features | True | False |
+| market_gettoplive_logistic | total_kills | derived_side_features | True | False |
+| market_gettoplive_logistic | side_tower | derived_side_features | True | False |
+| market_gettoplive_logistic | side_rax | derived_side_features | True | False |
+| market_gettoplive_logistic | structure_score | derived_side_features | True | False |
+| market_nw_logistic | logit_market_price | derived_side_features | True | False |
+| market_nw_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_nw_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_nw_logistic | book_age_s | derived_side_features | True | False |
+| market_nw_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_nw_logistic | side_nw | derived_side_features | True | False |
+| market_score_logistic | logit_market_price | derived_side_features | True | False |
+| market_score_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_score_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_score_logistic | book_age_s | derived_side_features | True | False |
+| market_score_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_score_logistic | side_score | derived_side_features | True | False |
+| market_score_logistic | total_kills | derived_side_features | True | False |
+| market_transition_kill_logistic | logit_market_price | derived_side_features | True | False |
+| market_transition_kill_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_transition_kill_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_transition_kill_logistic | book_age_s | derived_side_features | True | False |
+| market_transition_kill_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_transition_kill_logistic | side_transition_kill_delta | derived_transition_features | True | False |
+| market_transition_kill_logistic | side_transition_score_delta | derived_transition_features | True | False |
+| market_transition_kill_logistic | side_transition_kill_per_sec | derived_transition_features | True | False |
+| market_transition_kill_logistic | transition_dt_sec | derived_transition_features | True | False |
+| market_transition_kill_logistic | score_changed_without_nw | derived_transition_features | True | False |
+| market_transition_kill_logistic | score_nw_changed_together | derived_transition_features | True | False |
+| market_transition_kill_logistic | score_leads_nw_sec | derived_transition_features | True | False |
+| market_transition_kill_logistic | score_nw_lag_type | derived_transition_features | True | False |
+| market_transition_kill_logistic | transition_signal_type | derived_transition_features | True | False |
+| market_kill_momentum_logistic | logit_market_price | derived_side_features | True | False |
+| market_kill_momentum_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_kill_momentum_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_kill_momentum_logistic | book_age_s | derived_side_features | True | False |
+| market_kill_momentum_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_kill_momentum_logistic | side_kill_mom | derived_side_features | True | False |
+| market_transition_nw_kill_logistic | logit_market_price | derived_side_features | True | False |
+| market_transition_nw_kill_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_transition_nw_kill_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_transition_nw_kill_logistic | book_age_s | derived_side_features | True | False |
+| market_transition_nw_kill_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_transition_nw_kill_logistic | nw_changed_without_score | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | nw_leads_score_sec | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | score_changed_without_nw | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | score_leads_nw_sec | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | score_nw_changed_together | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | side_transition_kill_delta | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | side_transition_kill_per_sec | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | side_transition_nw_delta | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | side_transition_nw_per_sec | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | side_transition_score_delta | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | transition_dt_sec | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | score_nw_lag_type | derived_transition_features | True | False |
+| market_transition_nw_kill_logistic | transition_signal_type | derived_transition_features | True | False |
+| market_transition_catchup_logistic | logit_market_price | derived_side_features | True | False |
+| market_transition_catchup_logistic | book_spread | raw_live_side_snapshot | True | False |
+| market_transition_catchup_logistic | book_ask_size_log | derived_side_features | True | False |
+| market_transition_catchup_logistic | book_age_s | derived_side_features | True | False |
+| market_transition_catchup_logistic | game_time_sec | raw_live_side_snapshot | True | False |
+| market_transition_catchup_logistic | score_changed_without_nw | derived_transition_features | True | False |
+| market_transition_catchup_logistic | nw_changed_without_score | derived_transition_features | True | False |
+| market_transition_catchup_logistic | score_nw_changed_together | derived_transition_features | True | False |
+| market_transition_catchup_logistic | score_leads_nw_sec | derived_transition_features | True | False |
+| market_transition_catchup_logistic | nw_leads_score_sec | derived_transition_features | True | False |
+| market_transition_catchup_logistic | side_transition_nw_delta | derived_transition_features | True | False |
+| market_transition_catchup_logistic | side_transition_kill_delta | derived_transition_features | True | False |
+| market_transition_catchup_logistic | side_transition_nw_per_sec | derived_transition_features | True | False |
+| market_transition_catchup_logistic | side_transition_kill_per_sec | derived_transition_features | True | False |
+| market_transition_catchup_logistic | score_nw_lag_type | derived_transition_features | True | False |
+| market_transition_catchup_logistic | transition_signal_type | derived_transition_features | True | False |
 
 ## Market Calibration
 
@@ -437,7 +800,48 @@ Trade ledgers are deduped by `canonical_exposure_id = match_id + current_game_nu
 The table below is a DATA-QUALITY diagnostic only. It answers: does one provenance source produce worse liquidity/binding artifacts?
 It does NOT split strategy PnL into separate buckets.
 
-_No rows._
+| stage | model_name | unified_trades | unified_matches | canonical_exposures | unified_win_rate | unified_pnl | unified_pnl_slip_1c | unified_pnl_slip_2c |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| lockbox | market_momentum_logistic__with_bucket | 14 | 12 | 14 | 71.4% | +3.4500 | +3.3100 | +3.1700 |
+| lockbox | market_gettoplive_logistic | 11 | 11 | 11 | 81.8% | +3.0100 | +2.9000 | +2.7900 |
+| lockbox | market_gettoplive_logistic__with_bucket | 11 | 11 | 11 | 81.8% | +2.9300 | +2.8200 | +2.7100 |
+| lockbox | market_nw_logistic | 11 | 11 | 11 | 81.8% | +2.8200 | +2.7100 | +2.6000 |
+| lockbox | market_nw_kill_momentum_logistic__with_bucket | 9 | 8 | 9 | 77.8% | +2.7900 | +2.7000 | +2.6100 |
+| lockbox | market_transition_nw_kill_logistic__with_bucket | 20 | 14 | 20 | 65.0% | +2.6200 | +2.4200 | +2.2200 |
+| lockbox | market_momentum_logistic | 8 | 7 | 8 | 75.0% | +2.4000 | +2.3200 | +2.2400 |
+| lockbox | market_transition_catchup_logistic | 14 | 11 | 14 | 71.4% | +2.2500 | +2.1100 | +1.9700 |
+| lockbox | market_transition_nw_logistic | 14 | 11 | 14 | 71.4% | +2.2000 | +2.0600 | +1.9200 |
+| lockbox | market_nw_logistic__with_bucket | 11 | 10 | 11 | 63.6% | +1.7700 | +1.6600 | +1.5500 |
+| lockbox | market_transition_catchup_logistic__with_bucket | 19 | 13 | 19 | 63.2% | +1.8000 | +1.6100 | +1.4200 |
+| lockbox | market_nw_kill_momentum_logistic | 17 | 12 | 17 | 58.8% | +1.7100 | +1.5400 | +1.3700 |
+| lockbox | market_transition_nw_logistic__with_bucket | 13 | 11 | 13 | 69.2% | +1.5900 | +1.4600 | +1.3300 |
+| lockbox | market_score_logistic | 20 | 16 | 20 | 50.0% | +1.2600 | +1.0600 | +0.8600 |
+| lockbox | market_transition_nw_kill_logistic | 22 | 14 | 22 | 54.5% | +1.2500 | +1.0300 | +0.8100 |
+| lockbox | market_structure_logistic | 2 | 2 | 2 | 100.0% | +1.0300 | +1.0100 | +0.9900 |
+| lockbox | market_score_logistic__with_bucket | 14 | 10 | 14 | 50.0% | +0.7200 | +0.5800 | +0.4400 |
+| lockbox | market_transition_kill_logistic__with_bucket | 17 | 10 | 17 | 52.9% | +0.7300 | +0.5600 | +0.3900 |
+| lockbox | market_structure_logistic__with_bucket | 7 | 5 | 7 | 57.1% | +0.5700 | +0.5000 | +0.4300 |
+| lockbox | market_kill_momentum_logistic__with_bucket | 8 | 5 | 8 | 50.0% | +0.5600 | +0.4800 | +0.4000 |
+| lockbox | market_transition_kill_logistic | 19 | 14 | 19 | 42.1% | +0.5200 | +0.3300 | +0.1400 |
+| lockbox | market_kill_momentum_logistic | 6 | 6 | 6 | 33.3% | +0.2900 | +0.2300 | +0.1700 |
+| walk_forward | market_nw_kill_momentum_logistic | 19 | 16 | 19 | 73.7% | +5.2000 | +5.0100 | +4.8200 |
+| walk_forward | market_nw_kill_momentum_logistic__with_bucket | 20 | 16 | 20 | 70.0% | +4.6600 | +4.4600 | +4.2600 |
+| walk_forward | market_momentum_logistic | 24 | 18 | 24 | 66.7% | +4.6400 | +4.4000 | +4.1600 |
+| walk_forward | market_momentum_logistic__with_bucket | 25 | 19 | 25 | 64.0% | +3.3000 | +3.0500 | +2.8000 |
+| walk_forward | market_gettoplive_logistic__with_bucket | 20 | 16 | 20 | 70.0% | +2.4800 | +2.2800 | +2.0800 |
+| walk_forward | market_gettoplive_logistic | 20 | 16 | 20 | 70.0% | +2.4700 | +2.2700 | +2.0700 |
+| walk_forward | market_nw_logistic__with_bucket | 22 | 18 | 22 | 63.6% | +2.0500 | +1.8300 | +1.6100 |
+| walk_forward | market_transition_nw_kill_logistic__with_bucket | 36 | 24 | 36 | 58.3% | +2.1000 | +1.7400 | +1.3800 |
+| walk_forward | market_transition_catchup_logistic__with_bucket | 32 | 21 | 32 | 59.4% | +1.6900 | +1.3700 | +1.0500 |
+| walk_forward | market_nw_logistic | 18 | 16 | 18 | 66.7% | +1.2300 | +1.0500 | +0.8700 |
+| walk_forward | market_score_logistic | 28 | 21 | 28 | 57.1% | +1.0900 | +0.8100 | +0.5300 |
+| walk_forward | market_transition_kill_logistic | 25 | 16 | 25 | 52.0% | +1.0400 | +0.7900 | +0.5400 |
+| walk_forward | market_kill_momentum_logistic | 25 | 18 | 25 | 56.0% | +0.9500 | +0.7000 | +0.4500 |
+| walk_forward | market_score_logistic__with_bucket | 27 | 21 | 27 | 55.6% | +0.7800 | +0.5100 | +0.2400 |
+| walk_forward | market_transition_nw_logistic__with_bucket | 29 | 21 | 29 | 58.6% | +0.7800 | +0.4900 | +0.2000 |
+| walk_forward | market_transition_kill_logistic__with_bucket | 24 | 16 | 24 | 50.0% | +0.3500 | +0.1100 | -0.1300 |
+| walk_forward | market_transition_nw_logistic | 30 | 20 | 30 | 53.3% | +0.4100 | +0.1100 | -0.1900 |
+| walk_forward | market_kill_momentum_logistic__with_bucket | 22 | 17 | 22 | 54.5% | +0.0300 | -0.1900 | -0.4100 |
 
 ## Trade PnL Concentration
 
@@ -842,3 +1246,8 @@ By league:
 - `bucket_artifact_check.csv`
 - `duplicate_exposure_impact.csv`
 - `instrument_provenance_diagnostic.csv`
+- `candidate_overlap_matrix.csv`
+- `candidate_threshold_robustness.csv`
+- `candidate_match_bootstrap.csv`
+- `candidate_canonical_concentration.csv`
+- `live_backtest_feature_parity.csv`

@@ -5,14 +5,19 @@ import pandas as pd
 from market_residual_gettoplive_analysis import (
     add_canonical_exposure_id,
     add_future_prices,
+    candidate_overlap_matrix,
+    canonical_concentration_table,
     concentration_tables,
+    feature_parity_table,
     fold_robustness_table,
     market_calibration_table,
     market_models,
+    match_bootstrap_table,
     model_summary_table,
     prediction_output,
     provenance_diagnostic_table,
     residual_bucket_tables,
+    threshold_robustness_table,
     trade_output,
     trade_uncertainty_table,
     transition_entry_event_study,
@@ -401,6 +406,13 @@ def test_add_canonical_exposure_id_uses_match_game_side():
     ])
     out2 = add_canonical_exposure_id(frame2)
     assert out2.loc[0, "canonical_exposure_id"] == out2.loc[1, "canonical_exposure_id"]
+    frame3 = pd.DataFrame([
+        {"match_id": "m1", "current_game_number": "", "side": "YES"},
+        {"match_id": "m1", "current_game_number": None, "side": "NO"},
+    ])
+    out3 = add_canonical_exposure_id(frame3)
+    assert out3.loc[0, "canonical_exposure_id"] == "m1::MAPEQUIV::YES"
+    assert out3.loc[1, "canonical_exposure_id"] == "m1::MAPEQUIV::NO"
 
 
 def test_provenance_diagnostic_table_reports_unified_pnl():
@@ -429,3 +441,77 @@ def test_provenance_diagnostic_table_reports_unified_pnl():
     assert "provenance_match_winner_game3_proxy_trades" in diag.index
     assert diag["provenance_map_winner_trades"] == 1
     assert diag["provenance_match_winner_game3_proxy_trades"] == 1
+
+
+def test_candidate_overlap_matrix_uses_canonical_exposures():
+    trades = pd.DataFrame(
+        [
+            {"stage": "walk_forward", "model_name": "a", "canonical_exposure_id": "e1"},
+            {"stage": "walk_forward", "model_name": "a", "canonical_exposure_id": "e2"},
+            {"stage": "walk_forward", "model_name": "b", "canonical_exposure_id": "e2"},
+            {"stage": "walk_forward", "model_name": "b", "canonical_exposure_id": "e3"},
+        ]
+    )
+
+    table = candidate_overlap_matrix(trades, models=["a", "b"])
+    ab = table[(table["model_name"] == "a") & (table["other_model_name"] == "b")].iloc[0]
+
+    assert ab["overlap_exposures"] == 1
+    assert ab["model_exposures"] == 2
+    assert ab["other_exposures"] == 2
+    assert round(ab["jaccard_overlap"], 3) == 0.333
+
+
+def test_threshold_robustness_aggregates_by_model_threshold():
+    thresholds = pd.DataFrame(
+        [
+            {"stage": "walk_forward", "fold": 1, "model_name": "m", "threshold": 0.05, "trades": 2, "total_pnl": 0.4, "total_pnl_slip_1c": 0.3, "total_pnl_slip_2c": 0.2},
+            {"stage": "walk_forward", "fold": 2, "model_name": "m", "threshold": 0.05, "trades": 1, "total_pnl": -0.1, "total_pnl_slip_1c": -0.2, "total_pnl_slip_2c": -0.3},
+            {"stage": "walk_forward", "fold": 1, "model_name": "m", "threshold": 0.10, "trades": 0, "total_pnl": 0.0, "total_pnl_slip_1c": 0.0, "total_pnl_slip_2c": 0.0},
+        ]
+    )
+
+    table = threshold_robustness_table(thresholds, models=["m"]).set_index("threshold")
+
+    assert table.loc[0.05, "folds"] == 2
+    assert table.loc[0.05, "total_trades"] == 3
+    assert table.loc[0.05, "folds_positive_1c"] == 1
+
+
+def test_match_bootstrap_resamples_match_level_pnl():
+    trades = pd.DataFrame(
+        [
+            {"stage": "walk_forward", "model_name": "m", "match_id": "m1", "pnl_slip_1c": 1.0},
+            {"stage": "walk_forward", "model_name": "m", "match_id": "m1", "pnl_slip_1c": 0.5},
+            {"stage": "walk_forward", "model_name": "m", "match_id": "m2", "pnl_slip_1c": -0.5},
+        ]
+    )
+
+    table = match_bootstrap_table(trades, models=["m"], iterations=100, seed=1).iloc[0]
+
+    assert table["trades"] == 3
+    assert table["matches"] == 2
+    assert table["observed_pnl_1c"] == 1.0
+    assert 0 <= table["prob_positive_pnl_1c"] <= 1
+
+
+def test_canonical_concentration_reports_exposure_share():
+    trades = pd.DataFrame(
+        [
+            {"stage": "walk_forward", "model_name": "m", "canonical_exposure_id": "e1", "match_id": "m1", "current_game_number": 1, "side": "YES", "settled_win": True, "book_best_ask": 0.30, "pnl_slip_1c": 0.69},
+            {"stage": "walk_forward", "model_name": "m", "canonical_exposure_id": "e2", "match_id": "m2", "current_game_number": 1, "side": "NO", "settled_win": False, "book_best_ask": 0.40, "pnl_slip_1c": -0.41},
+        ]
+    )
+
+    table = canonical_concentration_table(trades, models=["m"]).set_index("canonical_exposure_id")
+
+    assert table.loc["e1", "positive_pnl_share"] == 1.0
+    assert table.loc["e2", "positive_pnl_share"] == 0.0
+
+
+def test_feature_parity_excludes_label_bucket_from_no_bucket_models():
+    table = feature_parity_table()
+    base = table[table["model_name"] == "market_nw_kill_momentum_logistic"]
+
+    assert not base["feature"].eq("label_market_bucket").any()
+    assert base["available_for_live_paper"].all()

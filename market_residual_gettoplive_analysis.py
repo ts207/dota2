@@ -40,6 +40,11 @@ CANDIDATE_BOARD_PATH = Path("candidate_selection.csv")
 BUCKET_ARTIFACT_PATH = Path("bucket_artifact_check.csv")
 DUPLICATE_IMPACT_PATH = Path("duplicate_exposure_impact.csv")
 INSTRUMENT_DIAGNOSTIC_PATH = Path("instrument_provenance_diagnostic.csv")
+CANDIDATE_OVERLAP_PATH = Path("candidate_overlap_matrix.csv")
+THRESHOLD_ROBUSTNESS_PATH = Path("candidate_threshold_robustness.csv")
+MATCH_BOOTSTRAP_PATH = Path("candidate_match_bootstrap.csv")
+CANONICAL_CONCENTRATION_PATH = Path("candidate_canonical_concentration.csv")
+FEATURE_PARITY_PATH = Path("live_backtest_feature_parity.csv")
 
 MIN_GAME_TIME_SEC = RESEARCH_MIN_GAME_TIME_SEC
 FUTURE_PRICE_MAX_LAG_SEC = 20
@@ -106,6 +111,22 @@ CATEGORICAL_FEATURES: list[str] = []
 CATEGORICAL_FEATURES_WITH_BUCKET = ["label_market_bucket"]
 TRANSITION_CATEGORICAL_FEATURES = ["score_nw_lag_type", "transition_signal_type"]
 TRANSITION_CATEGORICAL_FEATURES_WITH_BUCKET = ["label_market_bucket", "score_nw_lag_type", "transition_signal_type"]
+PRIMARY_NO_BUCKET_MODELS = [
+    "market_nw_kill_momentum_logistic",
+    "market_momentum_logistic",
+    "market_gettoplive_logistic",
+]
+SECONDARY_NO_BUCKET_MODELS = [
+    "market_nw_logistic",
+    "market_score_logistic",
+    "market_transition_kill_logistic",
+    "market_kill_momentum_logistic",
+]
+DOWNGRADED_NO_BUCKET_MODELS = [
+    "market_transition_nw_kill_logistic",
+    "market_transition_catchup_logistic",
+]
+REPORT_NO_BUCKET_MODELS = PRIMARY_NO_BUCKET_MODELS + SECONDARY_NO_BUCKET_MODELS + DOWNGRADED_NO_BUCKET_MODELS
 
 
 def pct(value: float) -> str:
@@ -154,7 +175,7 @@ def add_canonical_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:
     has_game = "current_game_number" in out.columns and out["current_game_number"].notna().any()
     has_side = "side" in out.columns
     if has_game and has_side:
-        game_num = out["current_game_number"].fillna("?").astype(str)
+        game_num = out["current_game_number"].map(_canonical_game_number)
         out["canonical_exposure_id"] = (
             out["match_id"].astype(str) + "::" + game_num + "::" + out["side"].astype(str)
         )
@@ -165,6 +186,18 @@ def add_canonical_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:
     else:
         out["canonical_exposure_id"] = out["match_id"].astype(str)
     return out
+
+
+def _canonical_game_number(value: object) -> str:
+    if value is None or pd.isna(value):
+        return "MAPEQUIV"
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "?"}:
+        return "MAPEQUIV"
+    numeric = pd.to_numeric(pd.Series([text]), errors="coerce").iloc[0]
+    if pd.notna(numeric) and float(numeric).is_integer():
+        return str(int(numeric))
+    return text
 
 
 def add_residual_buckets(frame: pd.DataFrame) -> pd.DataFrame:
@@ -816,11 +849,31 @@ def candidate_board_table(model_metrics: pd.DataFrame, trades: pd.DataFrame) -> 
     base_failing = set(board.loc[~board["with_bucket"] & ~walk_pos, "model_name"])
     artifact_risk_names = base_failing & bucket_passing
     board.loc[board["model_name"].isin(artifact_risk_names), "candidate_status"] = "artifact_risk"
+    summary = model_summary_table(model_metrics, trades)
+    if not summary.empty:
+        walk_summary = summary[summary["stage"] == "walk_forward"][
+            ["model_name", "uncertainty_reason", "verdict"]
+        ].rename(columns={"verdict": "summary_verdict"})
+        board = board.merge(walk_summary, on="model_name", how="left")
+        board["candidate_status"] = np.where(
+            (board["candidate_status"] == "candidate") & (board["summary_verdict"].notna()),
+            board["summary_verdict"],
+            board["candidate_status"],
+        )
+        board["candidate_status"] = np.where(
+            board["model_name"].isin(artifact_risk_names),
+            "artifact_risk",
+            board["candidate_status"],
+        )
+    else:
+        board["uncertainty_reason"] = ""
+        board["summary_verdict"] = ""
 
     cols = [
         "model_name", "with_bucket", "raw_trades", "canonical_exposures",
         "win_rate", "avg_ask", "pnl_raw", "pnl_1c", "pnl_2c",
-        "folds_with_trades", "folds_positive_1c", "lockbox_pnl_1c", "candidate_status",
+        "folds_with_trades", "folds_positive_1c", "lockbox_pnl_1c",
+        "uncertainty_reason", "candidate_status",
     ]
     return board[[c for c in cols if c in board.columns]].sort_values(
         ["with_bucket", "pnl_1c"], ascending=[True, False]
@@ -942,6 +995,197 @@ def instrument_provenance_diagnostic_table(frame: pd.DataFrame) -> pd.DataFrame:
     snap["selected_best_instrument"] = snap["label_market_bucket"] == snap["_best_bucket"]
     snap = snap.drop(columns=["_best_bucket"]).sort_values(["canonical_exposure_id", "ask"])
     return snap
+
+
+def candidate_overlap_matrix(trades: pd.DataFrame, models: list[str] | None = None) -> pd.DataFrame:
+    """Pairwise canonical-exposure overlap for no-bucket candidate families."""
+    if trades.empty or "canonical_exposure_id" not in trades.columns:
+        return pd.DataFrame()
+    models = models or REPORT_NO_BUCKET_MODELS
+    walk = trades[(trades["stage"] == "walk_forward") & (trades["model_name"].isin(models))].copy()
+    exposure_sets = {
+        model: set(sub["canonical_exposure_id"].dropna().astype(str))
+        for model, sub in walk.groupby("model_name")
+    }
+    rows = []
+    for left in models:
+        left_set = exposure_sets.get(left, set())
+        for right in models:
+            right_set = exposure_sets.get(right, set())
+            overlap = left_set & right_set
+            union = left_set | right_set
+            rows.append(
+                {
+                    "model_name": left,
+                    "other_model_name": right,
+                    "model_exposures": len(left_set),
+                    "other_exposures": len(right_set),
+                    "overlap_exposures": len(overlap),
+                    "jaccard_overlap": len(overlap) / len(union) if union else np.nan,
+                    "pct_model_overlapped": len(overlap) / len(left_set) if left_set else np.nan,
+                    "pct_other_overlapped": len(overlap) / len(right_set) if right_set else np.nan,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def threshold_robustness_table(thresholds: pd.DataFrame, models: list[str] | None = None) -> pd.DataFrame:
+    """Aggregate validation threshold-search performance by model/threshold."""
+    if thresholds.empty:
+        return pd.DataFrame()
+    models = models or REPORT_NO_BUCKET_MODELS
+    view = thresholds[(thresholds["stage"] == "walk_forward") & (thresholds["model_name"].isin(models))].copy()
+    if view.empty:
+        return pd.DataFrame()
+    return (
+        view.groupby(["model_name", "threshold"], as_index=False)
+        .agg(
+            folds=("fold", "nunique"),
+            total_trades=("trades", "sum"),
+            folds_with_trades=("trades", lambda s: int((s > 0).sum())),
+            folds_positive_1c=("total_pnl_slip_1c", lambda s: int((s > 0).sum())),
+            folds_positive_2c=("total_pnl_slip_2c", lambda s: int((s > 0).sum())),
+            total_pnl=("total_pnl", "sum"),
+            total_pnl_slip_1c=("total_pnl_slip_1c", "sum"),
+            total_pnl_slip_2c=("total_pnl_slip_2c", "sum"),
+        )
+        .sort_values(["model_name", "total_pnl_slip_1c"], ascending=[True, False])
+    )
+
+
+def match_bootstrap_table(
+    trades: pd.DataFrame,
+    models: list[str] | None = None,
+    *,
+    iterations: int = 2000,
+    seed: int = 20260624,
+) -> pd.DataFrame:
+    """Bootstrap PnL by resampling match-level trade PnL with replacement."""
+    if trades.empty:
+        return pd.DataFrame()
+    models = models or REPORT_NO_BUCKET_MODELS
+    walk = trades[(trades["stage"] == "walk_forward") & (trades["model_name"].isin(models))].copy()
+    if walk.empty:
+        return pd.DataFrame()
+    rng = np.random.default_rng(seed)
+    rows = []
+    for model_name, sub in walk.groupby("model_name"):
+        match_pnl = sub.groupby("match_id")["pnl_slip_1c"].sum().to_numpy(dtype=float)
+        if len(match_pnl) == 0:
+            continue
+        samples = rng.choice(match_pnl, size=(iterations, len(match_pnl)), replace=True).sum(axis=1)
+        observed = float(match_pnl.sum())
+        rows.append(
+            {
+                "model_name": model_name,
+                "trades": int(len(sub)),
+                "matches": int(sub["match_id"].nunique()),
+                "observed_pnl_1c": observed,
+                "bootstrap_mean_pnl_1c": float(np.mean(samples)),
+                "bootstrap_p05_pnl_1c": float(np.quantile(samples, 0.05)),
+                "bootstrap_p50_pnl_1c": float(np.quantile(samples, 0.50)),
+                "bootstrap_p95_pnl_1c": float(np.quantile(samples, 0.95)),
+                "prob_positive_pnl_1c": float((samples > 0).mean()),
+                "bootstrap_iterations": iterations,
+            }
+        )
+    return pd.DataFrame(rows).sort_values("observed_pnl_1c", ascending=False)
+
+
+def canonical_concentration_table(trades: pd.DataFrame, models: list[str] | None = None) -> pd.DataFrame:
+    """Largest canonical exposure contributors for no-bucket candidates."""
+    if trades.empty or "canonical_exposure_id" not in trades.columns:
+        return pd.DataFrame()
+    models = models or REPORT_NO_BUCKET_MODELS
+    walk = trades[(trades["stage"] == "walk_forward") & (trades["model_name"].isin(models))].copy()
+    if walk.empty:
+        return pd.DataFrame()
+    exposure = (
+        walk.groupby(["model_name", "canonical_exposure_id"], as_index=False)
+        .agg(
+            match_id=("match_id", "first"),
+            current_game_number=("current_game_number", "first"),
+            side=("side", "first"),
+            rows=("canonical_exposure_id", "size"),
+            settled_win=("settled_win", "first"),
+            avg_ask=("book_best_ask", "mean"),
+            pnl_1c=("pnl_slip_1c", "sum"),
+        )
+    )
+    totals = (
+        exposure[exposure["pnl_1c"] > 0]
+        .groupby("model_name", as_index=False)["pnl_1c"]
+        .sum()
+        .rename(columns={"pnl_1c": "positive_pnl_1c"})
+    )
+    exposure = exposure.merge(totals, on="model_name", how="left")
+    exposure["positive_pnl_share"] = np.where(
+        (exposure["pnl_1c"] > 0) & (exposure["positive_pnl_1c"] > 0),
+        exposure["pnl_1c"] / exposure["positive_pnl_1c"],
+        0.0,
+    )
+    exposure["abs_pnl_1c"] = exposure["pnl_1c"].abs()
+    return (
+        exposure.sort_values(["model_name", "abs_pnl_1c"], ascending=[True, False])
+        .drop(columns=["abs_pnl_1c"])
+    )
+
+
+def feature_parity_table() -> pd.DataFrame:
+    """Check whether candidate features can be produced from live side snapshots.
+
+    This uses schemas/code contracts only. It does not read live logs.
+    """
+    from dota2bot.schemas import SIDE_SNAPSHOT_COLUMNS
+    from dota2bot.transition_features import TRANSITION_COLUMNS
+
+    raw_live = set(SIDE_SNAPSHOT_COLUMNS)
+    derived_side = {
+        "book_age_s",
+        "logit_market_price",
+        "book_ask_size_log",
+        "market_prob",
+        "nw_lead_clean",
+        "score_diff",
+        "total_kills",
+        "side_nw",
+        "side_score",
+        "side_tower",
+        "side_rax",
+        "side_mom_100",
+        "side_mom_300",
+        "side_kill_mom",
+        "structure_score",
+        "state_score",
+        "state_prob_proxy",
+        "state_edge_proxy",
+        "tradable_research",
+    }
+    derived_transition = set(TRANSITION_COLUMNS)
+    models = market_models()
+    rows = []
+    for model_name in REPORT_NO_BUCKET_MODELS:
+        if model_name not in models:
+            continue
+        _, features = models[model_name]
+        for feature in features:
+            source = "missing"
+            if feature in raw_live:
+                source = "raw_live_side_snapshot"
+            elif feature in derived_side:
+                source = "derived_side_features"
+            elif feature in derived_transition:
+                source = "derived_transition_features"
+            rows.append(
+                {
+                    "model_name": model_name,
+                    "feature": feature,
+                    "source": source,
+                    "available_for_live_paper": source != "missing",
+                    "uses_label_market_bucket": feature == "label_market_bucket",
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def wilson_interval(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -1472,6 +1716,11 @@ def build_report(
     candidate_board: pd.DataFrame,
     artifact_check: pd.DataFrame,
     dup_impact: pd.DataFrame,
+    overlap_matrix: pd.DataFrame,
+    threshold_robustness: pd.DataFrame,
+    match_bootstrap: pd.DataFrame,
+    canonical_concentration: pd.DataFrame,
+    feature_parity: pd.DataFrame,
 ) -> str:
     aggregate = aggregate_model_metrics(model_metrics)
     model_summary = model_summary_table(model_metrics, trades)
@@ -1537,7 +1786,8 @@ def build_report(
             [c for c in [
                 "model_name", "with_bucket", "raw_trades", "canonical_exposures",
                 "win_rate", "avg_ask", "pnl_raw", "pnl_1c", "pnl_2c",
-                "folds_with_trades", "folds_positive_1c", "lockbox_pnl_1c", "candidate_status",
+                "folds_with_trades", "folds_positive_1c", "lockbox_pnl_1c",
+                "uncertainty_reason", "candidate_status",
             ] if c in candidate_board.columns],
             max_rows=60,
         ),
@@ -1563,6 +1813,102 @@ def build_report(
                 "model_name", "raw_trade_count", "canonical_trade_count",
                 "duplicate_exposures", "raw_pnl_1c", "canonical_pnl_1c", "pnl_removed_by_dedupe",
             ] if c in dup_impact.columns],
+        ),
+        "",
+        "## Candidate Overlap Matrix",
+        "",
+        "Pairwise overlap uses canonical exposures, so map-equivalent contracts are counted once.",
+        "",
+        markdown_table(
+            overlap_matrix,
+            [
+                "model_name",
+                "other_model_name",
+                "model_exposures",
+                "other_exposures",
+                "overlap_exposures",
+                "jaccard_overlap",
+                "pct_model_overlapped",
+                "pct_other_overlapped",
+            ],
+            max_rows=100,
+        ),
+        "",
+        "## Threshold Robustness",
+        "",
+        "Aggregated validation threshold-search results by model/threshold. This is not lockbox PnL.",
+        "",
+        markdown_table(
+            threshold_robustness,
+            [
+                "model_name",
+                "threshold",
+                "folds",
+                "total_trades",
+                "folds_with_trades",
+                "folds_positive_1c",
+                "folds_positive_2c",
+                "total_pnl",
+                "total_pnl_slip_1c",
+                "total_pnl_slip_2c",
+            ],
+            max_rows=100,
+        ),
+        "",
+        "## Match-Level Bootstrap",
+        "",
+        "Bootstrap resamples match-level 1c-slippage PnL with replacement. Low prob_positive means the edge is fragile across matches.",
+        "",
+        markdown_table(
+            match_bootstrap,
+            [
+                "model_name",
+                "trades",
+                "matches",
+                "observed_pnl_1c",
+                "bootstrap_mean_pnl_1c",
+                "bootstrap_p05_pnl_1c",
+                "bootstrap_p50_pnl_1c",
+                "bootstrap_p95_pnl_1c",
+                "prob_positive_pnl_1c",
+            ],
+            max_rows=40,
+        ),
+        "",
+        "## Canonical Exposure Concentration",
+        "",
+        "Largest canonical exposure contributors by absolute 1c PnL.",
+        "",
+        markdown_table(
+            canonical_concentration,
+            [
+                "model_name",
+                "canonical_exposure_id",
+                "match_id",
+                "current_game_number",
+                "side",
+                "settled_win",
+                "avg_ask",
+                "pnl_1c",
+                "positive_pnl_share",
+            ],
+            max_rows=80,
+        ),
+        "",
+        "## Live/Backtest Feature Parity",
+        "",
+        "Schema/code-contract check only. This does not read live logs.",
+        "",
+        markdown_table(
+            feature_parity,
+            [
+                "model_name",
+                "feature",
+                "source",
+                "available_for_live_paper",
+                "uses_label_market_bucket",
+            ],
+            max_rows=120,
         ),
         "",
         "## Market Calibration",
@@ -1786,6 +2132,11 @@ def build_report(
         f"- `{BUCKET_ARTIFACT_PATH}`",
         f"- `{DUPLICATE_IMPACT_PATH}`",
         f"- `{INSTRUMENT_DIAGNOSTIC_PATH}`",
+        f"- `{CANDIDATE_OVERLAP_PATH}`",
+        f"- `{THRESHOLD_ROBUSTNESS_PATH}`",
+        f"- `{MATCH_BOOTSTRAP_PATH}`",
+        f"- `{CANONICAL_CONCENTRATION_PATH}`",
+        f"- `{FEATURE_PARITY_PATH}`",
     ]
     return "\n".join(lines) + "\n"
 
@@ -1802,6 +2153,11 @@ def main() -> None:
     artifact_check = bucket_artifact_check_table(metrics)
     dup_impact = duplicate_exposure_impact_table(raw_trades, trades)
     instrument_diag = instrument_provenance_diagnostic_table(frame)
+    overlap_matrix = candidate_overlap_matrix(trades)
+    threshold_robustness = threshold_robustness_table(thresholds)
+    match_bootstrap = match_bootstrap_table(trades)
+    canonical_concentration = canonical_concentration_table(trades)
+    feature_parity = feature_parity_table()
     residuals.to_csv(RESIDUALS_PATH, index=False)
     predictions.to_csv(PREDICTIONS_PATH, index=False)
     trades.to_csv(TRADES_PATH, index=False)
@@ -1813,9 +2169,15 @@ def main() -> None:
     artifact_check.to_csv(BUCKET_ARTIFACT_PATH, index=False)
     dup_impact.to_csv(DUPLICATE_IMPACT_PATH, index=False)
     instrument_diag.to_csv(INSTRUMENT_DIAGNOSTIC_PATH, index=False)
+    overlap_matrix.to_csv(CANDIDATE_OVERLAP_PATH, index=False)
+    threshold_robustness.to_csv(THRESHOLD_ROBUSTNESS_PATH, index=False)
+    match_bootstrap.to_csv(MATCH_BOOTSTRAP_PATH, index=False)
+    canonical_concentration.to_csv(CANONICAL_CONCENTRATION_PATH, index=False)
+    feature_parity.to_csv(FEATURE_PARITY_PATH, index=False)
     REPORT_PATH.write_text(build_report(
         frame, residuals, predictions, trades, thresholds, metrics, clv, transition_study, folds, split,
         candidate_board, artifact_check, dup_impact,
+        overlap_matrix, threshold_robustness, match_bootstrap, canonical_concentration, feature_parity,
     ))
     print(f"Saved report: {REPORT_PATH}")
     print(f"Saved residuals: {RESIDUALS_PATH} ({len(residuals)} rows)")
@@ -1829,6 +2191,11 @@ def main() -> None:
     print(f"Saved bucket artifact check: {BUCKET_ARTIFACT_PATH} ({len(artifact_check)} rows)")
     print(f"Saved duplicate exposure impact: {DUPLICATE_IMPACT_PATH} ({len(dup_impact)} rows)")
     print(f"Saved instrument provenance diagnostic: {INSTRUMENT_DIAGNOSTIC_PATH} ({len(instrument_diag)} rows)")
+    print(f"Saved candidate overlap matrix: {CANDIDATE_OVERLAP_PATH} ({len(overlap_matrix)} rows)")
+    print(f"Saved threshold robustness: {THRESHOLD_ROBUSTNESS_PATH} ({len(threshold_robustness)} rows)")
+    print(f"Saved match bootstrap: {MATCH_BOOTSTRAP_PATH} ({len(match_bootstrap)} rows)")
+    print(f"Saved canonical concentration: {CANONICAL_CONCENTRATION_PATH} ({len(canonical_concentration)} rows)")
+    print(f"Saved feature parity: {FEATURE_PARITY_PATH} ({len(feature_parity)} rows)")
     print(aggregate_model_metrics(metrics).to_string(index=False))
 
 
