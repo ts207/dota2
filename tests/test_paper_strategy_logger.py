@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -10,10 +11,12 @@ from dota2bot.decision_reports import first_signal_trades, run_report_decisions,
 from dota2bot.paper_strategy_logger import (
     PAPER_MODEL_SPECS,
     PaperModelBundle,
+    add_model_scores,
     load_paper_model_bundle,
     run_paper_log,
     save_paper_model_bundle,
     score_paper_decisions,
+    validate_paper_model_artifact,
 )
 from dota2bot.schemas import DECISION_COLUMNS, SIDE_SNAPSHOT_COLUMNS
 from dota2bot.strategy_contract import (
@@ -66,6 +69,14 @@ def test_paper_specs_use_active_strategy_contract():
     assert BENCHMARK_MARKET_ANCHOR_SPECS[0].model_name == "market_gettoplive_logistic"
     assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "winprob_evfilter_paper_v1_mapequiv_ask20_50_e05"
     assert ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE == "live_executable"
+
+
+def test_win_prob_2c_edge_subtracts_ask_and_two_cent_cost():
+    frame = pd.DataFrame({"book_best_ask": [0.50]})
+    scored = add_model_scores(frame, FixedProbModel(0.75), ["book_best_ask"], score_kind="win_prob_2c")
+
+    assert scored.loc[0, "fair_prob"] == 0.75
+    assert scored.loc[0, "edge"] == pytest.approx(0.23)
 
 
 def test_default_paper_gate_requires_live_executable_snapshot():
@@ -255,6 +266,28 @@ def test_save_and_load_paper_model_bundle_round_trips(tmp_path: Path):
     assert Path(result["manifest_path"]).exists()
     assert loaded.model_version == bundle.model_version
     assert loaded.specs == bundle.specs
+
+
+def test_validate_paper_model_artifact_checks_manifest_contract(tmp_path: Path):
+    bundle = PaperModelBundle(
+        models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
+        specs=PAPER_MODEL_SPECS,
+        training_cutoff="2026-06-24T00:00:00+00:00",
+    )
+    artifact_dir = tmp_path / "artifact"
+    save_paper_model_bundle(bundle, artifact_dir=artifact_dir)
+
+    result = validate_paper_model_artifact(artifact_dir=artifact_dir)
+
+    assert result["valid"] is True
+    assert result["model_version"] == ACTIVE_MARKET_ANCHOR_MODEL_VERSION
+
+    manifest_path = artifact_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["model_version"] = "stale"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="model_version"):
+        validate_paper_model_artifact(artifact_dir=artifact_dir)
 
 
 def _side_row(received_at_ns: int = 1000) -> dict:

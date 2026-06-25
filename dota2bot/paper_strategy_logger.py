@@ -153,6 +153,47 @@ def load_paper_model_bundle(*, artifact_dir: Path = DEFAULT_MODEL_ARTIFACT_DIR) 
     return bundle
 
 
+def validate_paper_model_artifact(*, artifact_dir: Path = DEFAULT_MODEL_ARTIFACT_DIR) -> dict[str, Any]:
+    """Fail closed if the frozen paper artifact does not match the active contract."""
+    bundle_path = artifact_dir / MODEL_BUNDLE_FILENAME
+    manifest_path = artifact_dir / MODEL_MANIFEST_FILENAME
+    missing = [str(path) for path in [bundle_path, manifest_path] if not path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "paper model artifact is incomplete: "
+            + ", ".join(missing)
+            + ". Run `python -m dota2bot freeze-paper-model` before starting runtime."
+        )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("model_version") != MODEL_VERSION:
+        raise ValueError(
+            f"artifact manifest model_version={manifest.get('model_version')!r} does not match active {MODEL_VERSION!r}"
+        )
+    expected_specs = json.loads(json.dumps([asdict(spec) for spec in PAPER_MODEL_SPECS]))
+    if manifest.get("specs") != expected_specs:
+        raise ValueError("artifact manifest specs do not match active PAPER_MODEL_SPECS")
+
+    bundle = load_paper_model_bundle(artifact_dir=artifact_dir)
+    if bundle.specs != PAPER_MODEL_SPECS:
+        raise ValueError("artifact bundle specs do not match active PAPER_MODEL_SPECS")
+    missing_models = [spec.model_name for spec in PAPER_MODEL_SPECS if spec.model_name not in bundle.models]
+    if missing_models:
+        raise ValueError(f"artifact bundle missing models: {missing_models}")
+    for spec in PAPER_MODEL_SPECS:
+        if bundle.score_kinds.get(spec.model_name, spec.score_kind) != spec.score_kind:
+            raise ValueError(f"artifact score_kind mismatch for {spec.model_name}")
+
+    return {
+        "artifact_dir": str(artifact_dir),
+        "bundle_path": str(bundle_path),
+        "manifest_path": str(manifest_path),
+        "model_version": MODEL_VERSION,
+        "models": [spec.model_name for spec in PAPER_MODEL_SPECS],
+        "valid": True,
+    }
+
+
 def score_paper_decisions(
     frame: pd.DataFrame,
     bundle: PaperModelBundle,

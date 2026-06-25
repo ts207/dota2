@@ -13,6 +13,7 @@ from .active_strategy_backtest import (
     run_active_strategy_threshold_sweep,
 )
 from .audit_logs import add_audit_args, run_audit_logs
+from .calibration_report import add_paper_calibration_args, run_paper_calibration_report
 from .datasets import extract_datasets
 from .decision_reports import (
     add_report_decision_args,
@@ -74,6 +75,9 @@ def main() -> None:
 
     freeze_paper = sub.add_parser("freeze-paper-model", help="train and save the active paper model artifact")
     add_freeze_paper_model_args(freeze_paper)
+
+    paper_calibration = sub.add_parser("paper-calibration", help="report frozen paper model calibration by ask and edge bucket")
+    add_paper_calibration_args(paper_calibration)
 
     runtime = sub.add_parser("runtime", help="start, stop, restart, or check the bot runtime loops")
     add_runtime_args(runtime)
@@ -180,6 +184,14 @@ def main() -> None:
                 ),
                 indent=2,
                 sort_keys=True,
+            )
+        )
+    elif args.command == "paper-calibration":
+        print(
+            run_paper_calibration_report(
+                executable_path=Path(args.executable_path),
+                artifact_dir=Path(args.artifact_dir),
+                output_format=args.format,
             )
         )
     elif args.command == "runtime":

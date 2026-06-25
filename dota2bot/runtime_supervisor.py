@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .paper_strategy_logger import DEFAULT_MODEL_ARTIFACT_DIR, validate_paper_model_artifact
 from .strategy_contract import ACTIVE_PAPER_DECISIONS_NAME, ACTIVE_SETTLED_PAPER_DECISIONS_NAME
 
 
@@ -106,13 +107,15 @@ def run_runtime_command(*, action: str, logs_root: Path = Path("logs"), wait_sec
     if action == "status":
         return {"action": action, "processes": [_status(process, logs_root) for process in processes]}
     if action == "start":
-        return {"action": action, "processes": [_start(process, logs_root) for process in processes]}
+        artifact = validate_paper_model_artifact(artifact_dir=DEFAULT_MODEL_ARTIFACT_DIR)
+        return {"action": action, "artifact": artifact, "processes": [_start(process, logs_root) for process in processes]}
     if action == "stop":
         return {"action": action, "processes": [_stop(process, logs_root, wait_sec=wait_sec) for process in processes]}
     if action == "restart":
+        artifact = validate_paper_model_artifact(artifact_dir=DEFAULT_MODEL_ARTIFACT_DIR)
         stopped = [_stop(process, logs_root, wait_sec=wait_sec) for process in processes]
         started = [_start(process, logs_root) for process in processes]
-        return {"action": action, "stopped": stopped, "processes": started}
+        return {"action": action, "artifact": artifact, "stopped": stopped, "processes": started}
     raise ValueError(f"unknown runtime action: {action}")
 
 
