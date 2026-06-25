@@ -13,6 +13,7 @@ from .paper_strategy_logger import (
     DEFAULT_ELIGIBILITY_MODE,
     EXECUTABLE_BACKTEST_PATH,
     prepare_paper_feature_frame,
+    strategy_filter_mask,
     train_paper_model_bundle,
 )
 from .schemas import SIDE_SNAPSHOT_COLUMNS
@@ -75,10 +76,15 @@ def _score_active_strategy_rows(*, rows: pd.DataFrame, executable_path: Path) ->
 
 def _summarize_threshold(scored: pd.DataFrame, threshold: float) -> dict[str, Any]:
     spec = ACTIVE_MARKET_ANCHOR_SPECS[0]
-    signal = scored[scored["tradable_paper"].fillna(False).astype(bool) & (scored["edge"] >= threshold)].copy()
+    signal = scored[
+        scored["tradable_paper"].fillna(False).astype(bool)
+        & strategy_filter_mask(scored, spec)
+        & (scored["edge"] >= threshold)
+    ].copy()
     if not signal.empty:
-        signal = signal.sort_values(["canonical_exposure_id", "received_at_ns"])
-        trades = signal.drop_duplicates(["canonical_exposure_id"], keep="first").reset_index(drop=True)
+        signal = _add_map_exposure_id(signal)
+        signal = signal.sort_values(["map_exposure_id", "received_at_ns"])
+        trades = signal.drop_duplicates(["map_exposure_id"], keep="first").reset_index(drop=True)
     else:
         trades = signal
     settled = trades[trades["settled_win"].notna()].copy() if "settled_win" in trades.columns else trades.iloc[0:0].copy()
@@ -166,6 +172,14 @@ def _load_backtest_rows(*, executable_path: Path, live_settled_path: Path, inclu
     if identity_cols:
         rows = rows.drop_duplicates(identity_cols, keep="first")
     return rows.reset_index(drop=True)
+
+
+def _add_map_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    game = out["current_game_number"].astype("string").fillna("").str.strip()
+    game = game.mask(game.eq("") | game.str.lower().isin(["nan", "none", "<na>"]), "MAPEQUIV")
+    out["map_exposure_id"] = out["match_id"].astype(str) + "::" + game.astype(str)
+    return out
 
 
 def parse_thresholds(raw: str | None) -> list[float] | None:

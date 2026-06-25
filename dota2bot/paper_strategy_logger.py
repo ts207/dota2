@@ -98,7 +98,8 @@ def score_paper_decisions(
         scored = featured.copy()
         scored["fair_prob"] = model.predict_proba(scored[features])[:, 1]
         scored["edge"] = scored["fair_prob"] - scored["book_best_ask"]
-        scored["signal"] = scored["tradable_paper"] & (scored["edge"] >= spec.entry_threshold)
+        scored["strategy_filter"] = strategy_filter_mask(scored, spec)
+        scored["signal"] = scored["tradable_paper"] & scored["strategy_filter"] & (scored["edge"] >= spec.entry_threshold)
         scored["reason"] = scored.apply(lambda row: _decision_reason(row, spec.entry_threshold), axis=1)
         for row in scored.to_dict(orient="records"):
             decisions.append(_decision_row(row, spec, bundle))
@@ -144,6 +145,20 @@ def prepare_paper_feature_frame(
         featured["tradable_paper"] = executable & research_tradable
     featured["eligibility_mode"] = eligibility_mode
     return featured
+
+
+def strategy_filter_mask(frame: pd.DataFrame, spec: PaperModelSpec) -> pd.Series:
+    mask = pd.Series(True, index=frame.index)
+    if spec.market_scopes:
+        if "market_scope" not in frame.columns:
+            return pd.Series(False, index=frame.index)
+        mask &= frame["market_scope"].isin(spec.market_scopes)
+    ask = pd.to_numeric(frame["book_best_ask"], errors="coerce") if "book_best_ask" in frame.columns else pd.Series(np.nan, index=frame.index)
+    if spec.min_ask is not None:
+        mask &= ask >= spec.min_ask
+    if spec.max_ask is not None:
+        mask &= ask <= spec.max_ask
+    return mask.fillna(False).astype(bool)
 
 
 def run_paper_log(
@@ -345,6 +360,8 @@ def _decision_reason(row: pd.Series, threshold: float) -> str:
         return "not_research_tradable"
     if row.get("eligibility_mode") == "live_executable" and not _bool_or_false(row.get("executable_snapshot")):
         return str(row.get("quality_reason") or "not_executable_snapshot")
+    if "strategy_filter" in row and not bool(row.get("strategy_filter")):
+        return "outside_strategy_filter"
     if pd.isna(row.get("fair_prob")) or pd.isna(row.get("edge")):
         return "missing_model_score"
     if float(row.get("edge")) < threshold:

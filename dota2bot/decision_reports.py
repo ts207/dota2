@@ -195,35 +195,45 @@ def summarize_decisions(decisions: pd.DataFrame) -> dict[str, Any]:
 
 
 def first_signal_trades(decisions: pd.DataFrame) -> pd.DataFrame:
-    """Collapse repeated signal snapshots to first paper trade per canonical exposure."""
+    """Collapse repeated signal snapshots to first paper trade per model/map."""
     if decisions.empty or "signal" not in decisions.columns:
         return decisions.iloc[0:0].copy()
     signal = decisions[decisions["signal"].fillna(False).astype(bool)].copy()
     if signal.empty:
         return signal
-    if "canonical_exposure_id" not in signal.columns:
-        signal["canonical_exposure_id"] = signal["decision_id"]
-    sort_cols = [col for col in ["model_name", "canonical_exposure_id", "received_at_ns"] if col in signal.columns]
+    signal = _add_map_exposure_id(signal)
+    sort_cols = [col for col in ["model_name", "map_exposure_id", "received_at_ns"] if col in signal.columns]
     signal = signal.sort_values(sort_cols)
-    return signal.drop_duplicates(["model_name", "canonical_exposure_id"], keep="first").reset_index(drop=True)
+    return signal.drop_duplicates(["model_name", "map_exposure_id"], keep="first").reset_index(drop=True)
 
 
 def first_global_signal_trades(decisions: pd.DataFrame) -> pd.DataFrame:
-    """Collapse repeated and overlapping model signals to one exposure trade."""
+    """Collapse repeated and overlapping model signals to one map trade."""
     if decisions.empty or "signal" not in decisions.columns:
         return decisions.iloc[0:0].copy()
     signal = decisions[decisions["signal"].fillna(False).astype(bool)].copy()
     if signal.empty:
         return signal
-    if "canonical_exposure_id" not in signal.columns:
-        signal["canonical_exposure_id"] = signal["decision_id"]
+    signal = _add_map_exposure_id(signal)
     sort_cols = [
         col
-        for col in ["canonical_exposure_id", "received_at_ns", "model_name", "decision_id"]
+        for col in ["map_exposure_id", "received_at_ns", "model_name", "decision_id"]
         if col in signal.columns
     ]
     signal = signal.sort_values(sort_cols)
-    return signal.drop_duplicates(["canonical_exposure_id"], keep="first").reset_index(drop=True)
+    return signal.drop_duplicates(["map_exposure_id"], keep="first").reset_index(drop=True)
+
+
+def _add_map_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    if "current_game_number" in out.columns:
+        game = out["current_game_number"].astype("string").fillna("").str.strip()
+        game = game.mask(game.eq("") | game.str.lower().isin(["nan", "none", "<na>"]), "MAPEQUIV")
+    else:
+        game = pd.Series("MAPEQUIV", index=out.index, dtype="string")
+    match_id = out["match_id"].astype(str) if "match_id" in out.columns else out["decision_id"].astype(str)
+    out["map_exposure_id"] = match_id + "::" + game.astype(str)
+    return out
 
 
 def add_settle_decision_args(parser: argparse.ArgumentParser) -> None:
@@ -247,7 +257,7 @@ def _format_markdown(summary: dict[str, Any]) -> str:
         "",
         f"- decision rows: {summary['rows']}",
         f"- signal rows: {summary['signal_rows']}",
-        f"- canonical paper trades: {summary['trade_rows']}",
+        f"- model map trades: {summary['trade_rows']}",
         f"- global exposure trades: {summary['global_trade_rows']}",
         f"- settled canonical trades: {summary['settled_signal_rows']}",
         f"- settled global exposure trades: {summary['global_settled_signal_rows']}",

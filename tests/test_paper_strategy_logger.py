@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from dota2bot.decision_reports import run_report_decisions, run_settle_decisions
+from dota2bot.decision_reports import first_signal_trades, run_report_decisions, run_settle_decisions
 from dota2bot.paper_strategy_logger import PAPER_MODEL_SPECS, PaperModelBundle, run_paper_log, score_paper_decisions
 from dota2bot.schemas import DECISION_COLUMNS, SIDE_SNAPSHOT_COLUMNS
 from dota2bot.strategy_contract import (
@@ -48,11 +48,14 @@ def test_score_paper_decisions_logs_paper_validation_suite():
 def test_paper_specs_use_active_strategy_contract():
     assert PAPER_MODEL_SPECS == list(PAPER_MARKET_ANCHOR_SPECS)
     assert len(PAPER_MODEL_SPECS) == 4
-    assert PAPER_MODEL_SPECS[0].model_name == "market_nw_kill_momentum_logistic"
-    assert PAPER_MODEL_SPECS[0].entry_threshold == 0.18
+    assert PAPER_MODEL_SPECS[0].model_name == "market_gettoplive_logistic"
+    assert PAPER_MODEL_SPECS[0].entry_threshold == 0.15
+    assert PAPER_MODEL_SPECS[0].market_scopes == ("map_winner_explicit",)
+    assert PAPER_MODEL_SPECS[0].min_ask == 0.20
+    assert PAPER_MODEL_SPECS[0].max_ask == 0.50
     assert list(PAPER_MODEL_SPECS[1:3]) == list(BENCHMARK_MARKET_ANCHOR_SPECS)
     assert list(PAPER_MODEL_SPECS[3:]) == list(CONTROL_MARKET_ANCHOR_SPECS)
-    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "market_anchor_paper_v4_edge18_live_exec_benchmarks"
+    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "market_anchor_paper_v5_gettoplive_map_ask20_50"
     assert ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE == "live_executable"
 
 
@@ -145,6 +148,8 @@ def test_settle_decisions_handles_no_settled_signals(tmp_path: Path):
 def test_report_decisions_summarizes_model_and_signal_group(tmp_path: Path):
     decisions = pd.DataFrame([{col: None for col in DECISION_COLUMNS} for _ in range(2)])
     decisions["model_name"] = ["market_momentum_logistic", "market_momentum_logistic"]
+    decisions["match_id"] = ["m1", "m2"]
+    decisions["current_game_number"] = [1, 1]
     decisions["signal"] = [True, True]
     decisions["settled_win"] = [True, False]
     decisions["ask"] = [0.40, 0.30]
@@ -163,6 +168,22 @@ def test_report_decisions_summarizes_model_and_signal_group(tmp_path: Path):
     assert "momentum_only" in report
     assert "+0.2800" in report
     assert "Global Exposure" in report
+
+
+def test_first_signal_trades_dedupes_opposite_sides_per_model_map():
+    decisions = pd.DataFrame([{col: None for col in DECISION_COLUMNS} for _ in range(3)])
+    decisions["decision_id"] = ["d1", "d2", "d3"]
+    decisions["model_name"] = ["m", "m", "m"]
+    decisions["match_id"] = ["match1", "match1", "match1"]
+    decisions["current_game_number"] = [1, 1, 2]
+    decisions["side"] = ["YES", "NO", "YES"]
+    decisions["canonical_exposure_id"] = ["match1::1::YES", "match1::1::NO", "match1::2::YES"]
+    decisions["received_at_ns"] = [100, 200, 300]
+    decisions["signal"] = [True, True, True]
+
+    trades = first_signal_trades(decisions)
+
+    assert trades["decision_id"].tolist() == ["d1", "d3"]
 
 
 def test_run_paper_log_respects_min_received_at_ns(tmp_path: Path, monkeypatch):
