@@ -170,6 +170,7 @@ def main() -> None:
                     signals_only=args.signals_only,
                     limit=args.limit,
                     min_received_at_ns=args.min_received_at_ns,
+                    force_full_rescore=args.force_full_rescore,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -191,6 +192,7 @@ def main() -> None:
             run_paper_calibration_report(
                 executable_path=Path(args.executable_path),
                 artifact_dir=Path(args.artifact_dir),
+                eligibility_mode=args.eligibility_mode,
                 output_format=args.format,
             )
         )

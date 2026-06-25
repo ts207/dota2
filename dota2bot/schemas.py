@@ -121,6 +121,8 @@ DECISION_COLUMNS = [
     "entry_threshold",
     "paper_entry_price",
     "signal_group",
+    "snapshot_signal_group",
+    "exposure_signal_group",
     "side_nw",
     "side_score",
     "side_mom_100",

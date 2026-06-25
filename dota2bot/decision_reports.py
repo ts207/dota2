@@ -17,6 +17,12 @@ from .schemas import DECISION_COLUMNS
 DEFAULT_DECISION_NAME = "strategy_decisions"
 DEFAULT_SETTLED_SIDE_NAME = "live_settled_side_snapshots"
 DEFAULT_SETTLED_DECISION_NAME = "settled_strategy_decisions"
+CANDIDATE_PRIORITY = {
+    "primary": 0,
+    "benchmark": 1,
+    "full_state_benchmark": 1,
+    "control": 2,
+}
 
 
 def run_settle_decisions(
@@ -69,7 +75,7 @@ def run_settle_decisions(
     if "hold_to_settlement_pnl_per_share" in merged.columns:
         merged = merged.drop(columns=["hold_to_settlement_pnl_per_share"])
 
-    out = merged[DECISION_COLUMNS].copy()
+    out = _add_signal_group_columns(merged)[DECISION_COLUMNS].copy()
     out_dir = logs_root / output_name
     out_dir.mkdir(parents=True, exist_ok=True)
     output_path = out_dir / "latest.parquet"
@@ -132,6 +138,7 @@ def summarize_decisions(decisions: pd.DataFrame) -> dict[str, Any]:
             "signal_groups": [],
             "global_exposure": {},
         }
+    decisions = _add_signal_group_columns(decisions)
     signal = decisions["signal"].fillna(False).astype(bool) if "signal" in decisions.columns else pd.Series(False, index=decisions.index)
     settled = decisions["settled_win"].notna() if "settled_win" in decisions.columns else pd.Series(False, index=decisions.index)
     trades = first_signal_trades(decisions)
@@ -159,8 +166,9 @@ def summarize_decisions(decisions: pd.DataFrame) -> dict[str, Any]:
         }
         rows.append(row)
     group_rows: list[dict[str, Any]] = []
-    if "signal_group" in decisions.columns:
-        for group, sub in trades.groupby("signal_group", dropna=False):
+    group_col = "exposure_signal_group" if "exposure_signal_group" in trades.columns else "signal_group"
+    if group_col in decisions.columns:
+        for group, sub in trades.groupby(group_col, dropna=False):
             group_rows.append(
                 {
                     "signal_group": str(group),
@@ -215,13 +223,14 @@ def first_global_signal_trades(decisions: pd.DataFrame) -> pd.DataFrame:
     if signal.empty:
         return signal
     signal = _add_map_exposure_id(signal)
+    signal["_candidate_priority"] = _candidate_priority(signal)
     sort_cols = [
         col
-        for col in ["map_exposure_id", "received_at_ns", "model_name", "decision_id"]
+        for col in ["map_exposure_id", "received_at_ns", "_candidate_priority", "decision_id"]
         if col in signal.columns
     ]
     signal = signal.sort_values(sort_cols)
-    return signal.drop_duplicates(["map_exposure_id"], keep="first").reset_index(drop=True)
+    return signal.drop_duplicates(["map_exposure_id"], keep="first").drop(columns=["_candidate_priority"], errors="ignore").reset_index(drop=True)
 
 
 def _exclude_control_decisions(decisions: pd.DataFrame) -> pd.DataFrame:
@@ -241,6 +250,77 @@ def _add_map_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:
     match_id = out["match_id"].astype(str) if "match_id" in out.columns else out["decision_id"].astype(str)
     out["map_exposure_id"] = match_id + "::" + game.astype(str)
     return out
+
+
+def _add_signal_group_columns(decisions: pd.DataFrame) -> pd.DataFrame:
+    if decisions.empty or "signal" not in decisions.columns:
+        return decisions.copy()
+    out = _add_map_exposure_id(decisions)
+    if "candidate_group" not in out.columns or out["candidate_group"].isna().all():
+        fallback = out["signal_group"] if "signal_group" in out.columns else pd.Series("no_signal", index=out.index)
+        fallback = fallback.astype("string").fillna("no_signal")
+        out["snapshot_signal_group"] = fallback
+        out["exposure_signal_group"] = fallback
+        out["signal_group"] = fallback
+        return out.drop(columns=["map_exposure_id"], errors="ignore")
+    out["snapshot_signal_group"] = _group_for_keys(out, ["match_id", "canonical_exposure_id", "received_at_ns", "side"])
+    out["exposure_signal_group"] = _group_for_keys(out, ["match_id", "map_exposure_id"])
+    out["signal_group"] = out["exposure_signal_group"]
+    return out.drop(columns=["map_exposure_id"], errors="ignore")
+
+
+def _group_for_keys(frame: pd.DataFrame, key_cols: list[str]) -> pd.Series:
+    missing = [col for col in key_cols if col not in frame.columns]
+    if missing:
+        return pd.Series("no_signal", index=frame.index, dtype="string")
+    signal = frame[frame["signal"].fillna(False).astype(bool)].copy()
+    if signal.empty:
+        return pd.Series("no_signal", index=frame.index, dtype="string")
+    signal_keys = _string_key_frame(signal, key_cols)
+    group_map = {}
+    for key, sub_idx in signal_keys.groupby(key_cols, dropna=False).groups.items():
+        sub = signal.loc[sub_idx]
+        groups = set(sub.get("candidate_group", pd.Series(dtype=object)).astype("string").str.lower().dropna())
+        if not isinstance(key, tuple):
+            key = (key,)
+        group_map[key] = _signal_group_label(groups)
+    frame_keys = _string_key_frame(frame, key_cols)
+    keys = frame_keys.apply(lambda row: tuple(row[col] for col in key_cols), axis=1)
+    return keys.map(group_map).fillna("no_signal")
+
+
+def _string_key_frame(frame: pd.DataFrame, key_cols: list[str]) -> pd.DataFrame:
+    return frame[key_cols].astype("string").fillna("<NA>")
+
+
+def _signal_group_label(groups: set[str]) -> str:
+    groups = {group for group in groups if group and group != "<na>"}
+    if not groups:
+        return "no_signal"
+    has_primary = "primary" in groups
+    has_benchmark = bool(groups.intersection({"benchmark", "full_state_benchmark"}))
+    has_control = "control" in groups
+    if has_primary and has_benchmark and has_control:
+        return "primary_benchmark_control"
+    if has_primary and has_benchmark:
+        return "primary_and_benchmark"
+    if has_primary and has_control:
+        return "primary_and_control"
+    if has_primary:
+        return "primary_only"
+    if has_benchmark and has_control:
+        return "benchmark_and_control"
+    if has_benchmark:
+        return "benchmark_only"
+    if has_control:
+        return "control_only"
+    return "other_signal"
+
+
+def _candidate_priority(frame: pd.DataFrame) -> pd.Series:
+    if "candidate_group" not in frame.columns:
+        return pd.Series(9, index=frame.index)
+    return frame["candidate_group"].astype("string").str.lower().map(CANDIDATE_PRIORITY).fillna(9).astype(int)
 
 
 def add_settle_decision_args(parser: argparse.ArgumentParser) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,7 @@ def test_paper_calibration_report_outputs_ask_and_edge_buckets(tmp_path: Path):
     rows = [_side_row(received_at_ns=100), _side_row(received_at_ns=200)]
     rows[0]["settled_win"] = True
     rows[1]["settled_win"] = False
+    rows[1]["executable_snapshot"] = False
     executable_path = tmp_path / "clean.parquet"
     pd.DataFrame(rows).to_parquet(executable_path, index=False)
     bundle = PaperModelBundle(
@@ -38,9 +40,46 @@ def test_paper_calibration_report_outputs_ask_and_edge_buckets(tmp_path: Path):
     )
 
     assert "# Paper Model Calibration" in report
-    assert "## Ask Buckets" in report
-    assert "## Edge Buckets" in report
+    assert "eligibility: historical_research" in report
+    assert "## Row Ask Buckets" in report
+    assert "## Row Edge Buckets" in report
+    assert "## Trade Ask Buckets" in report
+    assert "## Trade Edge Buckets" in report
     assert "winprob_logistic_evfilter" in report
+
+    historical = json.loads(
+        run_paper_calibration_report(
+            executable_path=executable_path,
+            artifact_dir=artifact_dir,
+            output_format="json",
+        )
+    )
+    live = json.loads(
+        run_paper_calibration_report(
+            executable_path=executable_path,
+            artifact_dir=artifact_dir,
+            eligibility_mode="live_executable",
+            output_format="json",
+        )
+    )
+    historical_primary_rows = [
+        row
+        for row in historical["rows"]
+        if row["table"] == "ask_bucket"
+        and row["model_name"] == "winprob_logistic_evfilter"
+        and row["bucket"] == "(0.4, 0.5]"
+    ]
+    live_primary_rows = [
+        row
+        for row in live["rows"]
+        if row["table"] == "ask_bucket"
+        and row["model_name"] == "winprob_logistic_evfilter"
+        and row["bucket"] == "(0.4, 0.5]"
+    ]
+    assert historical["eligibility_mode"] == "historical_research"
+    assert live["eligibility_mode"] == "live_executable"
+    assert historical_primary_rows[0]["rows"] == 2
+    assert live_primary_rows[0]["rows"] == 1
 
 
 def _side_row(received_at_ns: int) -> dict:

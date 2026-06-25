@@ -42,7 +42,8 @@ MODEL_MANIFEST_FILENAME = "manifest.json"
 DEFAULT_INPUT_NAME = "live_side_snapshots"
 DEFAULT_OUTPUT_NAME = "strategy_decisions"
 DEFAULT_ELIGIBILITY_MODE = ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE
-ELIGIBILITY_MODES = {DEFAULT_ELIGIBILITY_MODE}
+HISTORICAL_RESEARCH_ELIGIBILITY_MODE = "historical_research"
+ELIGIBILITY_MODES = {DEFAULT_ELIGIBILITY_MODE, HISTORICAL_RESEARCH_ELIGIBILITY_MODE}
 
 
 PaperModelSpec = StrategySpec
@@ -223,7 +224,9 @@ def score_paper_decisions(
     out = pd.DataFrame(decisions, columns=DECISION_COLUMNS)
     if out.empty:
         return out
-    out["signal_group"] = _signal_groups(out)
+    out["snapshot_signal_group"] = _signal_groups(out, exposure_level=False)
+    out["exposure_signal_group"] = _signal_groups(out, exposure_level=True)
+    out["signal_group"] = out["exposure_signal_group"]
     return out[DECISION_COLUMNS]
 
 
@@ -301,6 +304,7 @@ def run_paper_log(
     limit: int | None = None,
     min_received_at_ns: int | None = None,
     eligibility_mode: str = DEFAULT_ELIGIBILITY_MODE,
+    force_full_rescore: bool = False,
 ) -> dict[str, Any]:
     input_dir = logs_root / input_name
     # Push the watermark filter down into DuckDB so only matching row-groups
@@ -325,7 +329,16 @@ def run_paper_log(
     if signals_only:
         decisions = decisions[decisions["signal"].fillna(False).astype(bool)].copy()
 
-    existing_ids = _read_existing_decision_ids(logs_root / output_name)
+    if min_received_at_ns is None and not force_full_rescore and _has_existing_decisions(logs_root / output_name):
+        raise ValueError(
+            "refusing full paper-log rescore into an existing decision ledger without a watermark; "
+            "pass --force-full-rescore to dedupe against the full ledger and append only missing rows"
+        )
+
+    existing_ids = _read_existing_decision_ids(
+        logs_root / output_name,
+        mode="all" if min_received_at_ns is None else "latest",
+    )
     before = len(decisions)
     if existing_ids:
         decisions = decisions[~decisions["decision_id"].astype(str).isin(existing_ids)].copy()
@@ -419,6 +432,7 @@ def add_paper_log_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--signals-only", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--min-received-at-ns", type=int, default=None)
+    parser.add_argument("--force-full-rescore", action="store_true")
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--interval-sec", type=float, default=30.0)
 
@@ -503,8 +517,12 @@ def _decision_reason(row: pd.Series, threshold: float) -> str:
     return "no_signal"
 
 
-def _signal_groups(decisions: pd.DataFrame) -> pd.Series:
-    key_cols = ["match_id", "canonical_exposure_id", "received_at_ns", "side"]
+def _signal_groups(decisions: pd.DataFrame, *, exposure_level: bool) -> pd.Series:
+    decisions = _add_map_exposure_id(decisions)
+    if exposure_level:
+        key_cols = ["match_id", "map_exposure_id"]
+    else:
+        key_cols = ["match_id", "canonical_exposure_id", "received_at_ns", "side"]
     specs_by_model = {spec.model_name: spec for spec in PAPER_MODEL_SPECS}
     model_names = list(specs_by_model)
     signal_map = (
@@ -551,6 +569,18 @@ def _signal_groups(decisions: pd.DataFrame) -> pd.Series:
 
     signal_map["_signal_group"] = signal_map.apply(group, axis=1)
     return decisions.merge(signal_map[key_cols + ["_signal_group"]], on=key_cols, how="left")["_signal_group"]
+
+
+def _add_map_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    if "current_game_number" in out.columns:
+        game = out["current_game_number"].astype("string").fillna("").str.strip()
+        game = game.mask(game.eq("") | game.str.lower().isin(["nan", "none", "<na>"]), "MAPEQUIV")
+    else:
+        game = pd.Series("MAPEQUIV", index=out.index, dtype="string")
+    match_id = out["match_id"].astype(str) if "match_id" in out.columns else out["decision_id"].astype(str)
+    out["map_exposure_id"] = match_id + "::" + game.astype(str)
+    return out
 
 
 def _add_canonical_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:
@@ -602,14 +632,27 @@ def _read_parquet_dir(path: Path, min_received_at_ns: int | None = None) -> pd.D
     ).fetchdf()
 
 
-def _read_existing_decision_ids(path: Path) -> set[str]:
+def _has_existing_decisions(path: Path) -> bool:
+    return any(path.glob("*.parquet"))
+
+
+def _read_existing_decision_ids(path: Path, *, mode: str = "latest") -> set[str]:
     # When a watermark is in use the decision IDs within the new window are
     # always fresh, so we only need IDs from the very latest file to guard
     # against the edge-case where a cycle is retried.
     files = sorted(path.glob("*.parquet"))
     if not files:
         return set()
-    frame = pd.read_parquet(files[-1])
+    if mode not in {"latest", "all"}:
+        raise ValueError(f"unknown existing decision id mode: {mode!r}")
+    if mode == "all":
+        con = duckdb.connect()
+        frame = con.execute(
+            "select decision_id from read_parquet(?, union_by_name=true)",
+            [str(path / "*.parquet")],
+        ).fetchdf()
+    else:
+        frame = pd.read_parquet(files[-1], columns=["decision_id"])
     if frame.empty or "decision_id" not in frame.columns:
         return set()
     return set(frame["decision_id"].dropna().astype(str))

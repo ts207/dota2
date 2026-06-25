@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from dota2bot.decision_reports import first_signal_trades, run_report_decisions, run_settle_decisions
+from dota2bot.decision_reports import first_global_signal_trades, first_signal_trades, run_report_decisions, run_settle_decisions
 from dota2bot.paper_strategy_logger import (
     PAPER_MODEL_SPECS,
     PaperModelBundle,
@@ -215,6 +215,21 @@ def test_report_global_exposure_excludes_control_models(tmp_path: Path):
     assert '"trade_rows": 2' in summary
 
 
+def test_global_exposure_tie_break_prefers_primary_over_benchmark():
+    decisions = pd.DataFrame([{col: None for col in DECISION_COLUMNS} for _ in range(2)])
+    decisions["decision_id"] = ["benchmark", "primary"]
+    decisions["model_name"] = ["market_gettoplive_logistic", "winprob_logistic_evfilter"]
+    decisions["candidate_group"] = ["benchmark", "primary"]
+    decisions["match_id"] = ["m1", "m1"]
+    decisions["current_game_number"] = [1, 1]
+    decisions["received_at_ns"] = [100, 100]
+    decisions["signal"] = [True, True]
+
+    trades = first_global_signal_trades(decisions)
+
+    assert trades["decision_id"].tolist() == ["primary"]
+
+
 def test_first_signal_trades_dedupes_opposite_sides_per_model_map():
     decisions = pd.DataFrame([{col: None for col in DECISION_COLUMNS} for _ in range(3)])
     decisions["decision_id"] = ["d1", "d2", "d3"]
@@ -250,6 +265,43 @@ def test_run_paper_log_respects_min_received_at_ns(tmp_path: Path, monkeypatch):
 
     assert result["input_rows"] == 1
     assert set(decisions["received_at_ns"]) == {200}
+
+
+def test_run_paper_log_refuses_full_rescore_into_existing_ledger(tmp_path: Path, monkeypatch):
+    live_dir = tmp_path / "live_side_snapshots"
+    live_dir.mkdir()
+    pd.DataFrame([_side_row(received_at_ns=100)]).to_parquet(live_dir / "part.parquet", index=False)
+    out_dir = tmp_path / "strategy_decisions"
+    out_dir.mkdir()
+    pd.DataFrame([{col: None for col in DECISION_COLUMNS}]).to_parquet(out_dir / "part-old.parquet", index=False)
+    bundle = PaperModelBundle(
+        models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
+        specs=PAPER_MODEL_SPECS,
+        training_cutoff="2026-06-24T00:00:00+00:00",
+    )
+    monkeypatch.setattr("dota2bot.paper_strategy_logger.load_paper_model_bundle", lambda **_: bundle)
+
+    with pytest.raises(ValueError, match="refusing full paper-log rescore"):
+        run_paper_log(logs_root=tmp_path)
+
+
+def test_force_full_rescore_dedupes_against_all_existing_parts(tmp_path: Path, monkeypatch):
+    live_dir = tmp_path / "live_side_snapshots"
+    live_dir.mkdir()
+    pd.DataFrame([_side_row(received_at_ns=100)]).to_parquet(live_dir / "part.parquet", index=False)
+    bundle = PaperModelBundle(
+        models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
+        specs=PAPER_MODEL_SPECS,
+        training_cutoff="2026-06-24T00:00:00+00:00",
+    )
+    monkeypatch.setattr("dota2bot.paper_strategy_logger.load_paper_model_bundle", lambda **_: bundle)
+
+    first = run_paper_log(logs_root=tmp_path, force_full_rescore=True)
+    second = run_paper_log(logs_root=tmp_path, force_full_rescore=True)
+
+    assert first["written_rows"] == len(PAPER_MODEL_SPECS)
+    assert second["written_rows"] == 0
+    assert second["skipped_existing_rows"] == len(PAPER_MODEL_SPECS)
 
 
 def test_save_and_load_paper_model_bundle_round_trips(tmp_path: Path):
