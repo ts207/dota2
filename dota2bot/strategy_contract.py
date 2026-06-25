@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-ACTIVE_MARKET_ANCHOR_MODEL_VERSION = "market_anchor_paper_v5_gettoplive_map_ask20_50"
+ACTIVE_MARKET_ANCHOR_MODEL_VERSION = "market_anchor_paper_v6_gettoplive_mapequiv_ask20_50"
 ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE = "live_executable"
 
 
@@ -23,10 +23,10 @@ class StrategySpec:
 ACTIVE_MARKET_ANCHOR_SPECS = (
     StrategySpec(
         model_name="market_gettoplive_logistic",
-        strategy_name="paper_market_gettoplive_map_ask20_50",
+        strategy_name="paper_market_gettoplive_mapequiv_ask20_50",
         candidate_group="primary",
-        entry_threshold=0.15,
-        market_scopes=("map_winner_explicit",),
+        entry_threshold=0.12,
+        market_scopes=("map_winner_explicit", "series_decider_equivalent"),
         min_ask=0.20,
         max_ask=0.50,
     ),

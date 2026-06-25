@@ -1,0 +1,12 @@
+step,rows,matches,map_exposures
+raw_clean_artifact,34317,135,137
+raw_live_settled,21978,19,21
+raw_combined,56295,154,158
+dedup_identity_combined,53787,154,158
+feature_frame,53787,154,158
+settled,53787,154,158
+map_equivalent_scope,46597,154,156
+executable_snapshot,9308,118,118
+tradable_research,17840,122,124
+live_executable_and_research_same_row,5414,95,95
+final_historical_executable_universe,16015,122,123

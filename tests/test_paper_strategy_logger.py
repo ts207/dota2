@@ -49,13 +49,13 @@ def test_paper_specs_use_active_strategy_contract():
     assert PAPER_MODEL_SPECS == list(PAPER_MARKET_ANCHOR_SPECS)
     assert len(PAPER_MODEL_SPECS) == 4
     assert PAPER_MODEL_SPECS[0].model_name == "market_gettoplive_logistic"
-    assert PAPER_MODEL_SPECS[0].entry_threshold == 0.15
-    assert PAPER_MODEL_SPECS[0].market_scopes == ("map_winner_explicit",)
+    assert PAPER_MODEL_SPECS[0].entry_threshold == 0.12
+    assert PAPER_MODEL_SPECS[0].market_scopes == ("map_winner_explicit", "series_decider_equivalent")
     assert PAPER_MODEL_SPECS[0].min_ask == 0.20
     assert PAPER_MODEL_SPECS[0].max_ask == 0.50
     assert list(PAPER_MODEL_SPECS[1:3]) == list(BENCHMARK_MARKET_ANCHOR_SPECS)
     assert list(PAPER_MODEL_SPECS[3:]) == list(CONTROL_MARKET_ANCHOR_SPECS)
-    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "market_anchor_paper_v5_gettoplive_map_ask20_50"
+    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "market_anchor_paper_v6_gettoplive_mapequiv_ask20_50"
     assert ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE == "live_executable"
 
 
