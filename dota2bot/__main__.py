@@ -8,7 +8,9 @@ from pathlib import Path
 from .active_strategy_backtest import (
     add_backtest_active_strategy_args,
     format_active_strategy_backtest,
+    parse_thresholds,
     run_active_strategy_backtest,
+    run_active_strategy_threshold_sweep,
 )
 from .audit_logs import add_audit_args, run_audit_logs
 from .datasets import extract_datasets
@@ -136,7 +138,6 @@ def main() -> None:
                 signals_only=args.signals_only,
                 limit=args.limit,
                 min_received_at_ns=args.min_received_at_ns,
-                eligibility_mode=args.eligibility_mode,
                 interval_sec=args.interval_sec,
             )
             return
@@ -151,7 +152,6 @@ def main() -> None:
                     signals_only=args.signals_only,
                     limit=args.limit,
                     min_received_at_ns=args.min_received_at_ns,
-                    eligibility_mode=args.eligibility_mode,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -188,12 +188,20 @@ def main() -> None:
             )
         )
     elif args.command == "backtest-active-strategy":
-        result = run_active_strategy_backtest(
-            executable_path=Path(args.executable_path),
-            live_settled_path=Path(args.live_settled_path),
-            include_live=not args.no_live,
-            eligibility_mode=args.eligibility_mode,
-        )
+        thresholds = parse_thresholds(args.thresholds)
+        if thresholds is None:
+            result = run_active_strategy_backtest(
+                executable_path=Path(args.executable_path),
+                live_settled_path=Path(args.live_settled_path),
+                include_live=not args.no_live,
+            )
+        else:
+            result = run_active_strategy_threshold_sweep(
+                thresholds=thresholds,
+                executable_path=Path(args.executable_path),
+                live_settled_path=Path(args.live_settled_path),
+                include_live=not args.no_live,
+            )
         print(format_active_strategy_backtest(result, output_format=args.format))
 
 

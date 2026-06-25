@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from dota2bot.decision_reports import run_report_decisions, run_settle_decisions
 from dota2bot.paper_strategy_logger import PAPER_MODEL_SPECS, PaperModelBundle, run_paper_log, score_paper_decisions
@@ -12,6 +13,9 @@ from dota2bot.strategy_contract import (
     ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE,
     ACTIVE_MARKET_ANCHOR_MODEL_VERSION,
     ACTIVE_MARKET_ANCHOR_SPECS,
+    BENCHMARK_MARKET_ANCHOR_SPECS,
+    CONTROL_MARKET_ANCHOR_SPECS,
+    PAPER_MARKET_ANCHOR_SPECS,
 )
 
 
@@ -23,7 +27,7 @@ class FixedProbModel:
         return np.array([[1.0 - self.probability, self.probability] for _ in range(len(frame))])
 
 
-def test_score_paper_decisions_logs_active_strategy_only():
+def test_score_paper_decisions_logs_paper_validation_suite():
     frame = pd.DataFrame([_side_row()])
     bundle = PaperModelBundle(
         models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
@@ -34,22 +38,25 @@ def test_score_paper_decisions_logs_active_strategy_only():
     decisions = score_paper_decisions(frame, bundle)
 
     assert list(decisions.columns) == DECISION_COLUMNS
-    assert len(decisions) == 1
+    assert len(decisions) == len(PAPER_MODEL_SPECS)
     assert decisions["signal"].all()
-    assert decisions["signal_group"].unique().tolist() == ["active_strategy_signal"]
+    assert decisions["signal_group"].unique().tolist() == ["primary_benchmark_control"]
     assert set(decisions["model_name"]) == {spec.model_name for spec in PAPER_MODEL_SPECS}
     assert decisions["entry_threshold"].notna().all()
 
 
 def test_paper_specs_use_active_strategy_contract():
-    assert PAPER_MODEL_SPECS == list(ACTIVE_MARKET_ANCHOR_SPECS)
-    assert len(PAPER_MODEL_SPECS) == 1
+    assert PAPER_MODEL_SPECS == list(PAPER_MARKET_ANCHOR_SPECS)
+    assert len(PAPER_MODEL_SPECS) == 4
     assert PAPER_MODEL_SPECS[0].model_name == "market_nw_kill_momentum_logistic"
-    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "market_anchor_paper_v2_research_gate"
-    assert ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE == "research"
+    assert PAPER_MODEL_SPECS[0].entry_threshold == 0.18
+    assert list(PAPER_MODEL_SPECS[1:3]) == list(BENCHMARK_MARKET_ANCHOR_SPECS)
+    assert list(PAPER_MODEL_SPECS[3:]) == list(CONTROL_MARKET_ANCHOR_SPECS)
+    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "market_anchor_paper_v4_edge18_live_exec_benchmarks"
+    assert ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE == "live_executable"
 
 
-def test_default_paper_gate_matches_research_tradability_not_live_executable():
+def test_default_paper_gate_requires_live_executable_snapshot():
     row = _side_row()
     row["executable_snapshot"] = False
     row["quality_reason"] = "small_ask_size"
@@ -59,13 +66,12 @@ def test_default_paper_gate_matches_research_tradability_not_live_executable():
         training_cutoff="2026-06-24T00:00:00+00:00",
     )
 
-    research_gate = score_paper_decisions(pd.DataFrame([row]), bundle)
-    live_gate = score_paper_decisions(pd.DataFrame([row]), bundle, eligibility_mode="live_executable")
+    default_gate = score_paper_decisions(pd.DataFrame([row]), bundle)
 
-    assert research_gate["signal"].all()
-    assert set(research_gate["reason"]) == {"paper_edge_signal"}
-    assert not live_gate["signal"].any()
-    assert set(live_gate["reason"]) == {"small_ask_size"}
+    assert not default_gate["signal"].any()
+    assert set(default_gate["reason"]) == {"small_ask_size"}
+    with pytest.raises(ValueError, match="unknown eligibility_mode"):
+        score_paper_decisions(pd.DataFrame([row]), bundle, eligibility_mode="research")
 
 
 def test_settle_decisions_fills_pnl_from_settled_side_rows(tmp_path: Path):
@@ -156,6 +162,7 @@ def test_report_decisions_summarizes_model_and_signal_group(tmp_path: Path):
     assert "market_momentum_logistic" in report
     assert "momentum_only" in report
     assert "+0.2800" in report
+    assert "Global Exposure" in report
 
 
 def test_run_paper_log_respects_min_received_at_ns(tmp_path: Path, monkeypatch):

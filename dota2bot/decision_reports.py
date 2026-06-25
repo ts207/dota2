@@ -124,14 +124,20 @@ def summarize_decisions(decisions: pd.DataFrame) -> dict[str, Any]:
             "rows": 0,
             "signal_rows": 0,
             "trade_rows": 0,
+            "global_trade_rows": 0,
             "settled_rows": 0,
             "settled_signal_rows": 0,
+            "global_settled_signal_rows": 0,
             "models": [],
             "signal_groups": [],
+            "global_exposure": {},
         }
     signal = decisions["signal"].fillna(False).astype(bool) if "signal" in decisions.columns else pd.Series(False, index=decisions.index)
     settled = decisions["settled_win"].notna() if "settled_win" in decisions.columns else pd.Series(False, index=decisions.index)
     trades = first_signal_trades(decisions)
+    global_trades = first_global_signal_trades(decisions)
+    global_settled_trades = global_trades[global_trades["settled_win"].notna()].copy() if not global_trades.empty else global_trades
+    global_wins = global_settled_trades["settled_win"].map(_bool_or_none).fillna(False).astype(bool) if not global_settled_trades.empty else pd.Series(dtype=bool)
     rows: list[dict[str, Any]] = []
     for model_name, sub in decisions.groupby("model_name", dropna=False):
         sub_signal = sub["signal"].fillna(False).astype(bool)
@@ -169,8 +175,20 @@ def summarize_decisions(decisions: pd.DataFrame) -> dict[str, Any]:
         "rows": int(len(decisions)),
         "signal_rows": int(signal.sum()),
         "trade_rows": int(len(trades)),
+        "global_trade_rows": int(len(global_trades)),
         "settled_rows": int(settled.sum()),
         "settled_signal_rows": int(trades["settled_win"].notna().sum()) if not trades.empty else 0,
+        "global_settled_signal_rows": int(len(global_settled_trades)),
+        "global_exposure": {
+            "trade_rows": int(len(global_trades)),
+            "pending_trade_rows": int(global_trades["settled_win"].isna().sum()) if not global_trades.empty else 0,
+            "settled_signal_rows": int(len(global_settled_trades)),
+            "win_rate": float(global_wins.mean()) if len(global_settled_trades) else None,
+            "avg_ask": float(pd.to_numeric(global_settled_trades["ask"], errors="coerce").mean()) if len(global_settled_trades) else None,
+            "paper_pnl": _sum_or_none(global_settled_trades, "paper_pnl_per_share"),
+            "pnl_slip_1c": _sum_or_none(global_settled_trades, "pnl_slip_1c"),
+            "pnl_slip_2c": _sum_or_none(global_settled_trades, "pnl_slip_2c"),
+        },
         "models": sorted(rows, key=lambda row: (row["pnl_slip_1c"] is not None, row["pnl_slip_1c"] or 0), reverse=True),
         "signal_groups": sorted(group_rows, key=lambda row: row["trade_rows"], reverse=True),
     }
@@ -188,6 +206,24 @@ def first_signal_trades(decisions: pd.DataFrame) -> pd.DataFrame:
     sort_cols = [col for col in ["model_name", "canonical_exposure_id", "received_at_ns"] if col in signal.columns]
     signal = signal.sort_values(sort_cols)
     return signal.drop_duplicates(["model_name", "canonical_exposure_id"], keep="first").reset_index(drop=True)
+
+
+def first_global_signal_trades(decisions: pd.DataFrame) -> pd.DataFrame:
+    """Collapse repeated and overlapping model signals to one exposure trade."""
+    if decisions.empty or "signal" not in decisions.columns:
+        return decisions.iloc[0:0].copy()
+    signal = decisions[decisions["signal"].fillna(False).astype(bool)].copy()
+    if signal.empty:
+        return signal
+    if "canonical_exposure_id" not in signal.columns:
+        signal["canonical_exposure_id"] = signal["decision_id"]
+    sort_cols = [
+        col
+        for col in ["canonical_exposure_id", "received_at_ns", "model_name", "decision_id"]
+        if col in signal.columns
+    ]
+    signal = signal.sort_values(sort_cols)
+    return signal.drop_duplicates(["canonical_exposure_id"], keep="first").reset_index(drop=True)
 
 
 def add_settle_decision_args(parser: argparse.ArgumentParser) -> None:
@@ -212,7 +248,28 @@ def _format_markdown(summary: dict[str, Any]) -> str:
         f"- decision rows: {summary['rows']}",
         f"- signal rows: {summary['signal_rows']}",
         f"- canonical paper trades: {summary['trade_rows']}",
+        f"- global exposure trades: {summary['global_trade_rows']}",
         f"- settled canonical trades: {summary['settled_signal_rows']}",
+        f"- settled global exposure trades: {summary['global_settled_signal_rows']}",
+        "",
+        "## Global Exposure",
+        "",
+        "| trades | settled | pending | win | avg ask | pnl | pnl 1c | pnl 2c |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| "
+        + " | ".join(
+            [
+                str(summary["global_exposure"].get("trade_rows", 0)),
+                str(summary["global_exposure"].get("settled_signal_rows", 0)),
+                str(summary["global_exposure"].get("pending_trade_rows", 0)),
+                _pct(summary["global_exposure"].get("win_rate")),
+                _num(summary["global_exposure"].get("avg_ask")),
+                _signed(summary["global_exposure"].get("paper_pnl")),
+                _signed(summary["global_exposure"].get("pnl_slip_1c")),
+                _signed(summary["global_exposure"].get("pnl_slip_2c")),
+            ]
+        )
+        + " |",
         "",
         "## Models",
         "",

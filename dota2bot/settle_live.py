@@ -14,6 +14,8 @@ import pandas as pd
 
 from .live_logger import (
     MAP_EQUIVALENT_SCOPES,
+    MAP_WINNER_EXPLICIT,
+    SERIES_DECIDER_EQUIVALENT,
     UNKNOWN_SCOPE,
     _bool_or_none,
     _classify_market_for_live_map,
@@ -128,6 +130,21 @@ def normalize_side_snapshot_frame(frame: pd.DataFrame) -> pd.DataFrame:
         if col not in out.columns:
             out[col] = None
     for col in [
+        "market_id",
+        "condition_id",
+        "market_name",
+        "market_type",
+        "market_scope",
+        "label_market_bucket",
+        "series_type",
+        "side",
+        "token_id",
+        "opposing_token_id",
+        "quality_reason",
+        "source_fresh",
+        "book_fresh",
+        "has_two_sided_book",
+        "executable_snapshot",
         "settled_win",
         "radiant_win",
         "yes_won",
@@ -259,11 +276,23 @@ def _outcome_row(match_id: str, outcome: dict[str, Any] | None) -> dict[str, Any
 
 
 def _derive_market_scope(row: pd.Series) -> str:
+    bucket = _text_upper(row.get("label_market_bucket"))
+    market_type = _text_upper(row.get("market_type"))
+    if bucket == "MAP_WINNER" or market_type == "MAP_WINNER":
+        return MAP_WINNER_EXPLICIT
+    if bucket in {"MATCH_WINNER_BO1", "MATCH_WINNER_GAME3_PROXY"}:
+        return SERIES_DECIDER_EQUIVALENT
     try:
         map_num = int(str(row.get("current_game_number") or ""))
     except ValueError:
         return UNKNOWN_SCOPE
     return str(_classify_market_for_live_map(row.to_dict(), map_num).get("market_scope") or UNKNOWN_SCOPE)
+
+
+def _text_upper(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip().upper()
 
 
 def _num_or_none(value: Any) -> float | None:

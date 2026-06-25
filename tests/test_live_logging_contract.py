@@ -6,6 +6,7 @@ import pandas as pd
 
 from dota2bot.audit_logs import run_audit_logs
 from dota2bot.live_logger import (
+    MAP_WINNER_EXPLICIT,
     SERIES_DECIDER_EQUIVALENT,
     _annotate_state_changes,
     _bind_discovered_markets,
@@ -533,3 +534,32 @@ def test_normalize_side_snapshot_frame_derives_legacy_map_equivalent_scope():
 
     assert normalized.loc[0, "market_scope"] == SERIES_DECIDER_EQUIVALENT
     assert normalized.loc[0, "executable_snapshot"] is True
+
+
+def test_normalize_side_snapshot_frame_honors_clean_dataset_label_buckets():
+    base = {
+        "match_id": "m1",
+        "market_name": "Dota 2: A vs B",
+        "source_update_age_sec": 1.0,
+        "book_age_ms": 100.0,
+        "book_best_bid": 0.49,
+        "book_best_ask": 0.51,
+        "book_ask_size": 200.0,
+        "book_spread": 0.02,
+    }
+    frame = pd.DataFrame(
+        [
+            {**base, "market_type": "MAP_WINNER", "label_market_bucket": "MAP_WINNER"},
+            {**base, "market_type": "MATCH_WINNER", "label_market_bucket": "MATCH_WINNER_BO1"},
+            {**base, "market_type": "MATCH_WINNER", "label_market_bucket": "MATCH_WINNER_GAME3_PROXY"},
+        ]
+    )
+
+    normalized = normalize_side_snapshot_frame(frame)
+
+    assert normalized["market_scope"].tolist() == [
+        MAP_WINNER_EXPLICIT,
+        SERIES_DECIDER_EQUIVALENT,
+        SERIES_DECIDER_EQUIVALENT,
+    ]
+    assert normalized["executable_snapshot"].tolist() == [True, True, True]

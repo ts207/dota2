@@ -24,7 +24,7 @@ from .side_features import RESEARCH_MIN_GAME_TIME_SEC, add_side_features
 from .strategy_contract import (
     ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE,
     ACTIVE_MARKET_ANCHOR_MODEL_VERSION,
-    ACTIVE_MARKET_ANCHOR_SPECS,
+    PAPER_MARKET_ANCHOR_SPECS,
     StrategySpec,
 )
 from .transition_features import add_transition_features
@@ -35,7 +35,7 @@ MODEL_VERSION = ACTIVE_MARKET_ANCHOR_MODEL_VERSION
 DEFAULT_INPUT_NAME = "live_side_snapshots"
 DEFAULT_OUTPUT_NAME = "strategy_decisions"
 DEFAULT_ELIGIBILITY_MODE = ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE
-ELIGIBILITY_MODES = {"research", "live_executable"}
+ELIGIBILITY_MODES = {DEFAULT_ELIGIBILITY_MODE}
 
 
 PaperModelSpec = StrategySpec
@@ -49,7 +49,7 @@ class PaperModelBundle:
     model_version: str = MODEL_VERSION
 
 
-PAPER_MODEL_SPECS = list(ACTIVE_MARKET_ANCHOR_SPECS)
+PAPER_MODEL_SPECS = list(PAPER_MARKET_ANCHOR_SPECS)
 
 
 def train_paper_model_bundle(
@@ -159,10 +159,9 @@ def run_paper_log(
     eligibility_mode: str = DEFAULT_ELIGIBILITY_MODE,
 ) -> dict[str, Any]:
     input_dir = logs_root / input_name
-    frame = _read_parquet_dir(input_dir)
-    if min_received_at_ns is not None and not frame.empty and "received_at_ns" in frame.columns:
-        received_at_ns = pd.to_numeric(frame["received_at_ns"], errors="coerce")
-        frame = frame[received_at_ns >= min_received_at_ns].copy()
+    # Push the watermark filter down into DuckDB so only matching row-groups
+    # are read from disk — avoids loading the entire (growing) directory.
+    frame = _read_parquet_dir(input_dir, min_received_at_ns=min_received_at_ns)
     if limit is not None:
         frame = frame.tail(limit).copy()
     if frame.empty:
@@ -174,6 +173,7 @@ def run_paper_log(
             "skipped_existing_rows": 0,
             "output_name": output_name,
             "min_received_at_ns": min_received_at_ns,
+            "max_received_at_ns": None,
         }
 
     bundle = train_paper_model_bundle(executable_path=executable_path)
@@ -185,6 +185,17 @@ def run_paper_log(
     before = len(decisions)
     if existing_ids:
         decisions = decisions[~decisions["decision_id"].astype(str).isin(existing_ids)].copy()
+
+    # Track max watermark *before* any signals_only filter so the loop can
+    # advance past rows that produce no decisions.
+    max_ns: int | None = None
+    if not frame.empty and "received_at_ns" in frame.columns:
+        raw_max = pd.to_numeric(frame["received_at_ns"], errors="coerce").max()
+        if not pd.isna(raw_max):
+            max_ns = int(raw_max)
+
+    if signals_only:
+        decisions = decisions[decisions["signal"].fillna(False).astype(bool)].copy()
 
     log = ParquetAppendLog(logs_root, output_name, DECISION_COLUMNS, batch_rows=batch_rows)
     log.extend(decisions.to_dict(orient="records"))
@@ -200,6 +211,7 @@ def run_paper_log(
         "output_path": str(out_path) if out_path else None,
         "models": [spec.model_name for spec in PAPER_MODEL_SPECS],
         "min_received_at_ns": min_received_at_ns,
+        "max_received_at_ns": max_ns,
         "eligibility_mode": eligibility_mode,
     }
 
@@ -217,6 +229,22 @@ def run_paper_log_loop(
     min_received_at_ns: int | None = None,
     eligibility_mode: str = DEFAULT_ELIGIBILITY_MODE,
 ) -> None:
+    """Loop that scores only *new* side snapshots each iteration.
+
+    On the first iteration ``min_received_at_ns`` is used as supplied (or
+    ``None`` to start from the watermark persisted in the output ledger).
+    After each iteration the watermark advances to the highest
+    ``received_at_ns`` seen, so subsequent iterations only touch rows that
+    arrived since the last cycle.  This prevents the ever-growing
+    ``live_side_snapshots/`` directory from being fully loaded into RAM on
+    every loop tick.
+    """
+    # Seed the watermark from the existing decision ledger so restarts don't
+    # re-process history.
+    watermark = min_received_at_ns
+    if watermark is None:
+        watermark = _latest_decision_watermark(logs_root / output_name)
+
     while True:
         result = run_paper_log(
             logs_root=logs_root,
@@ -226,9 +254,14 @@ def run_paper_log_loop(
             batch_rows=batch_rows,
             signals_only=signals_only,
             limit=limit,
-            min_received_at_ns=min_received_at_ns,
+            min_received_at_ns=watermark,
             eligibility_mode=eligibility_mode,
         )
+        # Advance the watermark so next iteration skips already-processed rows.
+        new_watermark = result.get("max_received_at_ns")
+        if new_watermark is not None:
+            # +1 so the boundary row is not re-processed.
+            watermark = int(new_watermark) + 1
         print(result, flush=True)
         time.sleep(interval_sec)
 
@@ -242,12 +275,6 @@ def add_paper_log_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--signals-only", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--min-received-at-ns", type=int, default=None)
-    parser.add_argument(
-        "--eligibility-mode",
-        choices=sorted(ELIGIBILITY_MODES),
-        default=DEFAULT_ELIGIBILITY_MODE,
-        help="research matches the backtest tradability gate; live_executable additionally requires the live executable snapshot gate",
-    )
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--interval-sec", type=float, default=30.0)
 
@@ -327,7 +354,8 @@ def _decision_reason(row: pd.Series, threshold: float) -> str:
 
 def _signal_groups(decisions: pd.DataFrame) -> pd.Series:
     key_cols = ["match_id", "canonical_exposure_id", "received_at_ns", "side"]
-    active_models = [spec.model_name for spec in PAPER_MODEL_SPECS]
+    specs_by_model = {spec.model_name: spec for spec in PAPER_MODEL_SPECS}
+    model_names = list(specs_by_model)
     signal_map = (
         decisions.pivot_table(
             index=key_cols,
@@ -338,18 +366,39 @@ def _signal_groups(decisions: pd.DataFrame) -> pd.Series:
         )
         .reset_index()
     )
-    for model_name in active_models:
+    for model_name in model_names:
         if model_name not in signal_map.columns:
             signal_map[model_name] = False
-    if len(active_models) == 1:
-        signal_map["_signal_group"] = np.where(
-            signal_map[active_models[0]].astype(bool),
-            "active_strategy_signal",
-            "no_signal",
-        )
-    else:
-        any_signal = signal_map[active_models].astype(bool).any(axis=1)
-        signal_map["_signal_group"] = np.where(any_signal, "active_strategy_signal", "no_signal")
+
+    def group(row: pd.Series) -> str:
+        signaled = [
+            specs_by_model[model_name].candidate_group
+            for model_name in model_names
+            if bool(row.get(model_name))
+        ]
+        if not signaled:
+            return "no_signal"
+        group_set = set(signaled)
+        has_primary = "primary" in group_set
+        has_benchmark = bool(group_set.intersection({"benchmark", "full_state_benchmark"}))
+        has_control = "control" in group_set
+        if has_primary and has_benchmark and has_control:
+            return "primary_benchmark_control"
+        if has_primary and has_benchmark:
+            return "primary_and_benchmark"
+        if has_primary and has_control:
+            return "primary_and_control"
+        if has_primary:
+            return "primary_only"
+        if has_benchmark and has_control:
+            return "benchmark_and_control"
+        if has_benchmark:
+            return "benchmark_only"
+        if has_control:
+            return "control_only"
+        return "other_signal"
+
+    signal_map["_signal_group"] = signal_map.apply(group, axis=1)
     return decisions.merge(signal_map[key_cols + ["_signal_group"]], on=key_cols, how="left")["_signal_group"]
 
 
@@ -381,22 +430,53 @@ def _ensure_side_columns(frame: pd.DataFrame) -> pd.DataFrame:
     return out[SIDE_SNAPSHOT_COLUMNS]
 
 
-def _read_parquet_dir(path: Path) -> pd.DataFrame:
+def _read_parquet_dir(path: Path, min_received_at_ns: int | None = None) -> pd.DataFrame:
     files = sorted(path.glob("*.parquet"))
     if not files:
         return pd.DataFrame()
     con = duckdb.connect()
+    glob = str(path / "*.parquet")
+    if min_received_at_ns is not None:
+        # DuckDB pushes the predicate into the parquet reader so only
+        # matching row-groups are scanned — orders of magnitude cheaper
+        # than loading the full directory into a DataFrame.
+        return con.execute(
+            "select * from read_parquet(?, union_by_name=true)"
+            " where received_at_ns >= ?",
+            [glob, min_received_at_ns],
+        ).fetchdf()
     return con.execute(
         "select * from read_parquet(?, union_by_name=true)",
-        [str(path / "*.parquet")],
+        [glob],
     ).fetchdf()
 
 
 def _read_existing_decision_ids(path: Path) -> set[str]:
-    frame = _read_parquet_dir(path)
+    # When a watermark is in use the decision IDs within the new window are
+    # always fresh, so we only need IDs from the very latest file to guard
+    # against the edge-case where a cycle is retried.
+    files = sorted(path.glob("*.parquet"))
+    if not files:
+        return set()
+    frame = pd.read_parquet(files[-1])
     if frame.empty or "decision_id" not in frame.columns:
         return set()
     return set(frame["decision_id"].dropna().astype(str))
+
+
+def _latest_decision_watermark(path: Path) -> int | None:
+    """Return max received_at_ns from the most-recent decision file, or None."""
+    files = sorted(path.glob("*.parquet"))
+    if not files:
+        return None
+    try:
+        frame = pd.read_parquet(files[-1], columns=["received_at_ns"])
+        if frame.empty:
+            return None
+        raw = pd.to_numeric(frame["received_at_ns"], errors="coerce").max()
+        return int(raw) + 1 if not pd.isna(raw) else None
+    except Exception:
+        return None
 
 
 def _decision_id(strategy_name: str, model_version: str, row: dict[str, Any]) -> str:
