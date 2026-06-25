@@ -7,7 +7,14 @@ import pandas as pd
 import pytest
 
 from dota2bot.decision_reports import first_signal_trades, run_report_decisions, run_settle_decisions
-from dota2bot.paper_strategy_logger import PAPER_MODEL_SPECS, PaperModelBundle, run_paper_log, score_paper_decisions
+from dota2bot.paper_strategy_logger import (
+    PAPER_MODEL_SPECS,
+    PaperModelBundle,
+    load_paper_model_bundle,
+    run_paper_log,
+    save_paper_model_bundle,
+    score_paper_decisions,
+)
 from dota2bot.schemas import DECISION_COLUMNS, SIDE_SNAPSHOT_COLUMNS
 from dota2bot.strategy_contract import (
     ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE,
@@ -47,15 +54,17 @@ def test_score_paper_decisions_logs_paper_validation_suite():
 
 def test_paper_specs_use_active_strategy_contract():
     assert PAPER_MODEL_SPECS == list(PAPER_MARKET_ANCHOR_SPECS)
-    assert len(PAPER_MODEL_SPECS) == 4
-    assert PAPER_MODEL_SPECS[0].model_name == "market_gettoplive_logistic"
-    assert PAPER_MODEL_SPECS[0].entry_threshold == 0.12
+    assert len(PAPER_MODEL_SPECS) == 3
+    assert PAPER_MODEL_SPECS[0].model_name == "winprob_logistic_evfilter"
+    assert PAPER_MODEL_SPECS[0].entry_threshold == 0.05
+    assert PAPER_MODEL_SPECS[0].score_kind == "win_prob_2c"
     assert PAPER_MODEL_SPECS[0].market_scopes == ("map_winner_explicit", "series_decider_equivalent")
     assert PAPER_MODEL_SPECS[0].min_ask == 0.20
     assert PAPER_MODEL_SPECS[0].max_ask == 0.50
-    assert list(PAPER_MODEL_SPECS[1:3]) == list(BENCHMARK_MARKET_ANCHOR_SPECS)
-    assert list(PAPER_MODEL_SPECS[3:]) == list(CONTROL_MARKET_ANCHOR_SPECS)
-    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "market_anchor_paper_v6_gettoplive_mapequiv_ask20_50"
+    assert list(PAPER_MODEL_SPECS[1:2]) == list(BENCHMARK_MARKET_ANCHOR_SPECS)
+    assert list(PAPER_MODEL_SPECS[2:]) == list(CONTROL_MARKET_ANCHOR_SPECS)
+    assert BENCHMARK_MARKET_ANCHOR_SPECS[0].model_name == "market_gettoplive_logistic"
+    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "winprob_evfilter_paper_v1_mapequiv_ask20_50_e05"
     assert ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE == "live_executable"
 
 
@@ -170,6 +179,31 @@ def test_report_decisions_summarizes_model_and_signal_group(tmp_path: Path):
     assert "Global Exposure" in report
 
 
+def test_report_global_exposure_excludes_control_models(tmp_path: Path):
+    decisions = pd.DataFrame([{col: None for col in DECISION_COLUMNS} for _ in range(2)])
+    decisions["decision_id"] = ["control_first", "primary_second"]
+    decisions["model_name"] = ["market_only_logistic", "winprob_logistic_evfilter"]
+    decisions["candidate_group"] = ["control", "primary"]
+    decisions["match_id"] = ["m1", "m1"]
+    decisions["current_game_number"] = [1, 1]
+    decisions["received_at_ns"] = [100, 200]
+    decisions["signal"] = [True, True]
+    decisions["settled_win"] = [False, True]
+    decisions["ask"] = [0.30, 0.40]
+    decisions["paper_pnl_per_share"] = [-0.30, 0.60]
+    decisions["pnl_slip_1c"] = [-0.31, 0.59]
+    decisions["pnl_slip_2c"] = [-0.32, 0.58]
+    out_dir = tmp_path / "settled_strategy_decisions"
+    out_dir.mkdir()
+    decisions.to_parquet(out_dir / "latest.parquet", index=False)
+
+    summary = run_report_decisions(logs_root=tmp_path, output_format="json")
+
+    assert '"global_trade_rows": 1' in summary
+    assert '"pnl_slip_2c": 0.58' in summary
+    assert '"trade_rows": 2' in summary
+
+
 def test_first_signal_trades_dedupes_opposite_sides_per_model_map():
     decisions = pd.DataFrame([{col: None for col in DECISION_COLUMNS} for _ in range(3)])
     decisions["decision_id"] = ["d1", "d2", "d3"]
@@ -198,13 +232,29 @@ def test_run_paper_log_respects_min_received_at_ns(tmp_path: Path, monkeypatch):
         specs=PAPER_MODEL_SPECS,
         training_cutoff="2026-06-24T00:00:00+00:00",
     )
-    monkeypatch.setattr("dota2bot.paper_strategy_logger.train_paper_model_bundle", lambda **_: bundle)
+    monkeypatch.setattr("dota2bot.paper_strategy_logger.load_paper_model_bundle", lambda **_: bundle)
 
     result = run_paper_log(logs_root=tmp_path, min_received_at_ns=200)
     decisions = pd.read_parquet(next((tmp_path / "strategy_decisions").glob("*.parquet")))
 
     assert result["input_rows"] == 1
     assert set(decisions["received_at_ns"]) == {200}
+
+
+def test_save_and_load_paper_model_bundle_round_trips(tmp_path: Path):
+    bundle = PaperModelBundle(
+        models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
+        specs=PAPER_MODEL_SPECS,
+        training_cutoff="2026-06-24T00:00:00+00:00",
+    )
+
+    result = save_paper_model_bundle(bundle, artifact_dir=tmp_path / "artifact")
+    loaded = load_paper_model_bundle(artifact_dir=tmp_path / "artifact")
+
+    assert Path(result["bundle_path"]).exists()
+    assert Path(result["manifest_path"]).exists()
+    assert loaded.model_version == bundle.model_version
+    assert loaded.specs == bundle.specs
 
 
 def _side_row(received_at_ns: int = 1000) -> dict:

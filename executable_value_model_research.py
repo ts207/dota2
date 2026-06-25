@@ -17,9 +17,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -59,8 +59,7 @@ NUMERIC_FEATURES = [
 ]
 CATEGORICAL_FEATURES = ["market_scope", "current_game_number"]
 FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
-PROB_THRESHOLDS = [0.48, 0.50, 0.52, 0.55, 0.58, 0.60, 0.62, 0.65]
-VALUE_THRESHOLDS = [-0.02, 0.00, 0.02, 0.04, 0.06, 0.08, 0.10]
+VALUE_THRESHOLDS = [-0.02, 0.00, 0.02, 0.03, 0.05, 0.08, 0.10, 0.12, 0.15, 0.18, 0.20]
 ASK_FILTERS = {
     "ask_15_70": (0.15, 0.70),
     "ask_20_50": (0.20, 0.50),
@@ -152,7 +151,6 @@ def load_frame() -> tuple[pd.DataFrame, pd.DataFrame]:
     ask = pd.to_numeric(frame["book_best_ask"], errors="coerce")
     win = frame["settled_win"].fillna(False).astype(bool)
     frame["pnl_2c"] = np.where(win, 1.0 - (ask + SLIPPAGE), -(ask + SLIPPAGE))
-    frame["profitable_after_2c"] = frame["pnl_2c"] > 0
     frame["value_after_2c"] = frame["settled_win"].astype(int) - ask - SLIPPAGE
     frame["match_sort_time"] = pd.to_datetime(frame["received_at_utc"], errors="coerce", utc=True)
     return frame.sort_values(["match_sort_time", "received_at_ns"]).reset_index(drop=True), pd.DataFrame(inventory_rows)
@@ -210,21 +208,25 @@ def run_walk_forward(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
             continue
         for spec in specs:
             model = clone_pipeline(spec.model)
-            y_col = "profitable_after_2c" if spec.score_kind == "value_class" else "settled_win"
-            model.fit(train[FEATURES], train[y_col].astype(int))
+            y_col = "value_after_2c" if spec.score_kind == "pnl_regression" else "settled_win"
+            y = pd.to_numeric(train[y_col], errors="coerce") if spec.score_kind == "pnl_regression" else train[y_col].astype(int)
+            model.fit(train[FEATURES], y)
             scored = test.copy()
-            prob = model.predict_proba(scored[FEATURES])[:, 1]
+            if spec.score_kind == "pnl_regression":
+                score = model.predict(scored[FEATURES])
+                scored["model_score"] = score
+                scored["expected_value_2c"] = score
+            else:
+                prob = model.predict_proba(scored[FEATURES])[:, 1]
+                scored["model_score"] = prob
+                scored["expected_value_2c"] = prob - scored["book_best_ask"] - SLIPPAGE
             scored["model_name"] = spec.name
             scored["fold"] = fold_num
             scored["score_kind"] = spec.score_kind
-            scored["model_score"] = prob
-            scored["expected_value_2c"] = prob - scored["book_best_ask"] - SLIPPAGE
             for ask_name, (min_ask, max_ask) in ASK_FILTERS.items():
                 ask_mask = scored["book_best_ask"].between(min_ask, max_ask)
-                thresholds = VALUE_THRESHOLDS if spec.score_kind == "win_prob" else PROB_THRESHOLDS
-                score_col = "expected_value_2c" if spec.score_kind == "win_prob" else "model_score"
-                for threshold in thresholds:
-                    signal = scored[ask_mask & (scored[score_col] >= threshold)].copy()
+                for threshold in VALUE_THRESHOLDS:
+                    signal = scored[ask_mask & (scored["expected_value_2c"] >= threshold)].copy()
                     trades = first_map_trades(signal)
                     if trades.empty:
                         continue
@@ -349,22 +351,27 @@ def run_lockbox_grid(dev: pd.DataFrame, lockbox: pd.DataFrame, results: pd.DataF
         if wanted_for_model.empty:
             continue
         model = clone_pipeline(spec.model)
-        y_col = "profitable_after_2c" if spec.score_kind == "value_class" else "settled_win"
-        model.fit(dev[FEATURES], dev[y_col].astype(int))
+        y_col = "value_after_2c" if spec.score_kind == "pnl_regression" else "settled_win"
+        y = pd.to_numeric(dev[y_col], errors="coerce") if spec.score_kind == "pnl_regression" else dev[y_col].astype(int)
+        model.fit(dev[FEATURES], y)
         scored = lockbox.copy()
-        prob = model.predict_proba(scored[FEATURES])[:, 1]
+        if spec.score_kind == "pnl_regression":
+            score = model.predict(scored[FEATURES])
+            scored["model_score"] = score
+            scored["expected_value_2c"] = score
+        else:
+            prob = model.predict_proba(scored[FEATURES])[:, 1]
+            scored["model_score"] = prob
+            scored["expected_value_2c"] = prob - scored["book_best_ask"] - SLIPPAGE
         scored["model_name"] = spec.name
         scored["score_kind"] = spec.score_kind
-        scored["model_score"] = prob
-        scored["expected_value_2c"] = prob - scored["book_best_ask"] - SLIPPAGE
-        score_col = "expected_value_2c" if spec.score_kind == "win_prob" else "model_score"
         for row in wanted_for_model.to_dict(orient="records"):
             ask_name = str(row["ask_filter"])
             min_ask, max_ask = ASK_FILTERS[ask_name]
             threshold = float(row["threshold"])
             signal = scored[
                 scored["book_best_ask"].between(min_ask, max_ask)
-                & (scored[score_col] >= threshold)
+                & (scored["expected_value_2c"] >= threshold)
             ].copy()
             trades = first_map_trades(signal)
             summary = summarize_trades(trades) if not trades.empty else empty_trade_summary()
@@ -398,10 +405,10 @@ def make_folds(matches: list[str], n_folds: int = 5) -> list[tuple[list[str], li
 
 def model_specs() -> list[ModelSpec]:
     return [
-        ModelSpec("value_logistic", logistic_pipeline(), "value_class"),
-        ModelSpec("winprob_logistic", logistic_pipeline(), "win_prob"),
-        ModelSpec("value_hgb", hgb_pipeline(), "value_class"),
-        ModelSpec("winprob_hgb", hgb_pipeline(), "win_prob"),
+        ModelSpec("winprob_logistic_evfilter", logistic_pipeline(), "win_prob"),
+        ModelSpec("winprob_hgb_evfilter", hgb_classifier_pipeline(), "win_prob"),
+        ModelSpec("pnl_ridge_regression", ridge_regression_pipeline(), "pnl_regression"),
+        ModelSpec("pnl_hgb_regression", hgb_regression_pipeline(), "pnl_regression"),
     ]
 
 
@@ -415,7 +422,7 @@ def logistic_pipeline() -> Pipeline:
     return Pipeline([("pre", pre), ("clf", LogisticRegression(max_iter=3000, C=0.5))])
 
 
-def hgb_pipeline() -> Pipeline:
+def hgb_classifier_pipeline() -> Pipeline:
     pre = ColumnTransformer(
         [
             ("num", Pipeline([("imputer", SimpleImputer(strategy="median"))]), NUMERIC_FEATURES),
@@ -423,6 +430,26 @@ def hgb_pipeline() -> Pipeline:
         ]
     )
     return Pipeline([("pre", pre), ("clf", HistGradientBoostingClassifier(max_iter=200, learning_rate=0.04, max_leaf_nodes=12, random_state=7))])
+
+
+def ridge_regression_pipeline() -> Pipeline:
+    pre = ColumnTransformer(
+        [
+            ("num", Pipeline([("imputer", SimpleImputer(strategy="median")), ("scale", StandardScaler())]), NUMERIC_FEATURES),
+            ("cat", Pipeline([("imputer", SimpleImputer(strategy="most_frequent")), ("onehot", OneHotEncoder(handle_unknown="ignore"))]), CATEGORICAL_FEATURES),
+        ]
+    )
+    return Pipeline([("pre", pre), ("reg", Ridge(alpha=2.0))])
+
+
+def hgb_regression_pipeline() -> Pipeline:
+    pre = ColumnTransformer(
+        [
+            ("num", Pipeline([("imputer", SimpleImputer(strategy="median"))]), NUMERIC_FEATURES),
+            ("cat", Pipeline([("imputer", SimpleImputer(strategy="most_frequent")), ("onehot", OneHotEncoder(handle_unknown="ignore"))]), CATEGORICAL_FEATURES),
+        ]
+    )
+    return Pipeline([("pre", pre), ("reg", HistGradientBoostingRegressor(max_iter=200, learning_rate=0.04, max_leaf_nodes=12, random_state=7))])
 
 
 def clone_pipeline(model: Pipeline) -> Pipeline:

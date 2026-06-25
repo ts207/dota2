@@ -22,8 +22,15 @@ from .decision_reports import (
     run_settle_decisions_loop,
 )
 from .live_logger import add_live_args, run_live_logger
-from .paper_strategy_logger import add_paper_log_args, run_paper_log, run_paper_log_loop
+from .paper_strategy_logger import (
+    add_freeze_paper_model_args,
+    add_paper_log_args,
+    run_paper_log,
+    run_paper_log_loop,
+    train_and_save_paper_model_bundle,
+)
 from .replay_bot import run_replay
+from .runtime_supervisor import add_runtime_args, format_runtime_result, run_runtime_command
 from .settle_live import add_settle_args, run_settle_live, run_settle_live_loop
 
 
@@ -64,6 +71,13 @@ def main() -> None:
 
     paper = sub.add_parser("paper-log", help="score live side snapshots into a paper decision ledger")
     add_paper_log_args(paper)
+
+    freeze_paper = sub.add_parser("freeze-paper-model", help="train and save the active paper model artifact")
+    add_freeze_paper_model_args(freeze_paper)
+
+    runtime = sub.add_parser("runtime", help="start, stop, restart, or check the bot runtime loops")
+    add_runtime_args(runtime)
+    runtime.add_argument("--format", choices=["json", "text"], default="json")
 
     settle_decisions = sub.add_parser("settle-decisions", help="join settled side outcomes into paper decisions")
     add_settle_decision_args(settle_decisions)
@@ -133,7 +147,7 @@ def main() -> None:
                 logs_root=Path(args.logs_root),
                 input_name=args.input_name,
                 output_name=args.output_name,
-                executable_path=Path(args.executable_path),
+                artifact_dir=Path(args.artifact_dir),
                 batch_rows=args.batch_rows,
                 signals_only=args.signals_only,
                 limit=args.limit,
@@ -147,7 +161,7 @@ def main() -> None:
                     logs_root=Path(args.logs_root),
                     input_name=args.input_name,
                     output_name=args.output_name,
-                    executable_path=Path(args.executable_path),
+                    artifact_dir=Path(args.artifact_dir),
                     batch_rows=args.batch_rows,
                     signals_only=args.signals_only,
                     limit=args.limit,
@@ -155,6 +169,28 @@ def main() -> None:
                 ),
                 indent=2,
                 sort_keys=True,
+            )
+        )
+    elif args.command == "freeze-paper-model":
+        print(
+            json.dumps(
+                train_and_save_paper_model_bundle(
+                    executable_path=Path(args.executable_path),
+                    artifact_dir=Path(args.artifact_dir),
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif args.command == "runtime":
+        print(
+            format_runtime_result(
+                run_runtime_command(
+                    action=args.action,
+                    logs_root=Path(args.logs_root),
+                    wait_sec=args.wait_sec,
+                ),
+                output_format=args.format,
             )
         )
     elif args.command == "settle-decisions":

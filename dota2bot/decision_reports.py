@@ -135,7 +135,7 @@ def summarize_decisions(decisions: pd.DataFrame) -> dict[str, Any]:
     signal = decisions["signal"].fillna(False).astype(bool) if "signal" in decisions.columns else pd.Series(False, index=decisions.index)
     settled = decisions["settled_win"].notna() if "settled_win" in decisions.columns else pd.Series(False, index=decisions.index)
     trades = first_signal_trades(decisions)
-    global_trades = first_global_signal_trades(decisions)
+    global_trades = first_global_signal_trades(_exclude_control_decisions(decisions))
     global_settled_trades = global_trades[global_trades["settled_win"].notna()].copy() if not global_trades.empty else global_trades
     global_wins = global_settled_trades["settled_win"].map(_bool_or_none).fillna(False).astype(bool) if not global_settled_trades.empty else pd.Series(dtype=bool)
     rows: list[dict[str, Any]] = []
@@ -208,7 +208,7 @@ def first_signal_trades(decisions: pd.DataFrame) -> pd.DataFrame:
 
 
 def first_global_signal_trades(decisions: pd.DataFrame) -> pd.DataFrame:
-    """Collapse repeated and overlapping model signals to one map trade."""
+    """Collapse repeated and overlapping non-control model signals to one map trade."""
     if decisions.empty or "signal" not in decisions.columns:
         return decisions.iloc[0:0].copy()
     signal = decisions[decisions["signal"].fillna(False).astype(bool)].copy()
@@ -222,6 +222,13 @@ def first_global_signal_trades(decisions: pd.DataFrame) -> pd.DataFrame:
     ]
     signal = signal.sort_values(sort_cols)
     return signal.drop_duplicates(["map_exposure_id"], keep="first").reset_index(drop=True)
+
+
+def _exclude_control_decisions(decisions: pd.DataFrame) -> pd.DataFrame:
+    if decisions.empty or "candidate_group" not in decisions.columns:
+        return decisions
+    candidate_group = decisions["candidate_group"].astype("string").fillna("")
+    return decisions[candidate_group.str.lower() != "control"].copy()
 
 
 def _add_map_exposure_id(frame: pd.DataFrame) -> pd.DataFrame:

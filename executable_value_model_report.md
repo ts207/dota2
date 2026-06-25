@@ -23,76 +23,67 @@ Matches: 122 total, 98 development, 24 lockbox.
 
 ## Promotion Verdict
 
-Promote candidate: `value_logistic` / `ask_20_50` / threshold `0.50`.
+Do not switch the running paper bot to a retrained model from this run.
+
+Promotion requires folds >= 4, development trades >= 15, lockbox trades >= 4, and positive 2c PnL on both development and lockbox.
+No retrained candidate passed that combined test.
 
 ## Development Selection
 
 ## Selected Candidate
 
-`value_logistic` / `ask_20_50` / threshold `0.50`.
+`winprob_logistic_evfilter` / `ask_25_55` / threshold `0.18`.
 
 | split | trades | win | avg ask | pnl | pnl 1c | pnl 2c |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| lockbox | 11 | 63.6% | 0.467 | +1.8600 | +1.7500 | +1.6400 |
+| lockbox | 3 | 66.7% | 0.400 | +0.8000 | +0.7700 | +0.7400 |
 
 ## Top Lockbox Candidates
 
 | model | kind | ask filter | threshold | trades | win | avg ask | pnl 2c |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| winprob_hgb | win_prob | ask_25_55 | 0.10 | 14 | 71.4% | 0.431 | +3.6800 |
-| winprob_hgb | win_prob | ask_20_50 | 0.06 | 15 | 66.7% | 0.405 | +3.6200 |
-| winprob_hgb | win_prob | ask_20_50 | 0.10 | 13 | 69.2% | 0.401 | +3.5300 |
-| winprob_hgb | win_prob | ask_25_55 | 0.08 | 15 | 66.7% | 0.426 | +3.3100 |
-| winprob_hgb | win_prob | ask_15_70 | 0.08 | 19 | 63.2% | 0.445 | +3.1600 |
-| winprob_hgb | win_prob | ask_20_50 | 0.08 | 14 | 64.3% | 0.404 | +3.0600 |
-| winprob_hgb | win_prob | ask_20_60 | 0.08 | 15 | 66.7% | 0.444 | +3.0400 |
-| value_hgb | value_class | ask_20_50 | 0.60 | 9 | 77.8% | 0.424 | +3.0000 |
-| winprob_hgb | win_prob | ask_25_55 | 0.06 | 16 | 62.5% | 0.419 | +2.9700 |
-| winprob_hgb | win_prob | ask_15_70 | 0.10 | 19 | 63.2% | 0.458 | +2.9100 |
-| winprob_hgb | win_prob | ask_20_60 | 0.10 | 15 | 66.7% | 0.453 | +2.9100 |
-| value_hgb | value_class | ask_20_50 | 0.62 | 9 | 77.8% | 0.438 | +2.8800 |
-| value_hgb | value_class | ask_20_50 | 0.65 | 9 | 77.8% | 0.442 | +2.8400 |
-| winprob_hgb | win_prob | ask_20_60 | 0.06 | 16 | 62.5% | 0.436 | +2.7000 |
-| winprob_logistic | win_prob | ask_25_55 | 0.02 | 11 | 72.7% | 0.462 | +2.7000 |
-| value_hgb | value_class | ask_25_55 | 0.62 | 11 | 72.7% | 0.470 | +2.6100 |
-| value_hgb | value_class | ask_25_55 | 0.65 | 11 | 72.7% | 0.472 | +2.5900 |
-| winprob_hgb | win_prob | ask_20_50 | 0.04 | 15 | 60.0% | 0.409 | +2.5700 |
-| winprob_logistic | win_prob | ask_25_55 | 0.04 | 7 | 85.7% | 0.486 | +2.4600 |
-| value_hgb | value_class | ask_20_50 | 0.55 | 13 | 61.5% | 0.409 | +2.4200 |
-
-## Robust Development Candidates
-
-| model | kind | ask filter | threshold | folds | trades | win | avg ask | pnl 2c |
-| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| value_logistic | value_class | ask_20_50 | 0.50 | 5 | 19 | 57.9% | 0.472 | +1.6500 |
-| value_logistic | value_class | ask_20_50 | 0.52 | 4 | 16 | 56.2% | 0.470 | +1.1600 |
-| value_hgb | value_class | ask_25_55 | 0.50 | 5 | 44 | 50.0% | 0.454 | +1.1300 |
-| value_logistic | value_class | ask_20_60 | 0.60 | 5 | 23 | 60.9% | 0.555 | +0.7800 |
-| value_logistic | value_class | ask_25_55 | 0.48 | 5 | 30 | 53.3% | 0.507 | +0.2000 |
-| value_logistic | value_class | ask_20_60 | 0.62 | 5 | 17 | 58.8% | 0.563 | +0.0900 |
-| value_logistic | value_class | ask_25_55 | 0.50 | 5 | 28 | 53.6% | 0.514 | +0.0600 |
+| winprob_hgb_evfilter | win_prob | ask_25_55 | 0.10 | 14 | 71.4% | 0.431 | +3.6800 |
+| pnl_hgb_regression | pnl_regression | ask_20_60 | 0.10 | 15 | 73.3% | 0.468 | +3.6800 |
+| pnl_hgb_regression | pnl_regression | ask_25_55 | 0.10 | 12 | 75.0% | 0.427 | +3.6400 |
+| winprob_hgb_evfilter | win_prob | ask_20_50 | 0.20 | 11 | 72.7% | 0.378 | +3.6200 |
+| winprob_hgb_evfilter | win_prob | ask_20_50 | 0.18 | 11 | 72.7% | 0.380 | +3.6000 |
+| winprob_hgb_evfilter | win_prob | ask_20_50 | 0.10 | 13 | 69.2% | 0.401 | +3.5300 |
+| pnl_hgb_regression | pnl_regression | ask_15_70 | 0.10 | 18 | 66.7% | 0.459 | +3.3700 |
+| winprob_hgb_evfilter | win_prob | ask_25_55 | 0.08 | 15 | 66.7% | 0.426 | +3.3100 |
+| winprob_hgb_evfilter | win_prob | ask_15_70 | 0.08 | 19 | 63.2% | 0.445 | +3.1600 |
+| winprob_hgb_evfilter | win_prob | ask_25_55 | 0.12 | 13 | 69.2% | 0.432 | +3.1200 |
+| winprob_hgb_evfilter | win_prob | ask_20_50 | 0.08 | 14 | 64.3% | 0.404 | +3.0600 |
+| winprob_hgb_evfilter | win_prob | ask_25_55 | 0.20 | 12 | 66.7% | 0.393 | +3.0500 |
+| winprob_hgb_evfilter | win_prob | ask_20_60 | 0.20 | 12 | 66.7% | 0.393 | +3.0400 |
+| winprob_hgb_evfilter | win_prob | ask_20_60 | 0.08 | 15 | 66.7% | 0.444 | +3.0400 |
+| winprob_hgb_evfilter | win_prob | ask_25_55 | 0.18 | 12 | 66.7% | 0.394 | +3.0300 |
+| winprob_logistic_evfilter | win_prob | ask_25_55 | 0.05 | 6 | 100.0% | 0.478 | +3.0100 |
+| winprob_hgb_evfilter | win_prob | ask_20_50 | 0.15 | 12 | 66.7% | 0.398 | +2.9800 |
+| winprob_hgb_evfilter | win_prob | ask_20_50 | 0.12 | 12 | 66.7% | 0.402 | +2.9400 |
+| pnl_ridge_regression | pnl_regression | ask_20_50 | 0.00 | 11 | 72.7% | 0.442 | +2.9200 |
+| winprob_hgb_evfilter | win_prob | ask_15_70 | 0.10 | 19 | 63.2% | 0.458 | +2.9100 |
 
 ## Top Development Candidates
 
 | model | kind | ask filter | threshold | folds | trades | win | avg ask | pnl 2c |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| value_logistic | value_class | ask_20_50 | 0.50 | 5 | 19 | 57.9% | 0.472 | +1.6500 |
-| value_logistic | value_class | ask_20_50 | 0.60 | 2 | 7 | 71.4% | 0.479 | +1.5100 |
-| value_logistic | value_class | ask_25_55 | 0.62 | 2 | 7 | 71.4% | 0.500 | +1.3600 |
-| value_logistic | value_class | ask_20_50 | 0.52 | 4 | 16 | 56.2% | 0.470 | +1.1600 |
-| value_hgb | value_class | ask_25_55 | 0.50 | 5 | 44 | 50.0% | 0.454 | +1.1300 |
-| value_logistic | value_class | ask_25_55 | 0.60 | 4 | 10 | 60.0% | 0.498 | +0.8200 |
-| value_logistic | value_class | ask_20_60 | 0.60 | 5 | 23 | 60.9% | 0.555 | +0.7800 |
-| value_logistic | value_class | ask_20_50 | 0.62 | 1 | 5 | 60.0% | 0.466 | +0.5700 |
-| value_logistic | value_class | ask_20_50 | 0.58 | 3 | 9 | 55.6% | 0.474 | +0.5500 |
-| value_logistic | value_class | ask_20_50 | 0.65 | 1 | 5 | 60.0% | 0.486 | +0.4700 |
-| value_logistic | value_class | ask_25_55 | 0.65 | 2 | 7 | 57.1% | 0.514 | +0.2600 |
-| value_logistic | value_class | ask_25_55 | 0.48 | 5 | 30 | 53.3% | 0.507 | +0.2000 |
-| value_logistic | value_class | ask_20_60 | 0.62 | 5 | 17 | 58.8% | 0.563 | +0.0900 |
-| value_logistic | value_class | ask_25_55 | 0.50 | 5 | 28 | 53.6% | 0.514 | +0.0600 |
-| value_logistic | value_class | ask_20_50 | 0.48 | 5 | 23 | 47.8% | 0.470 | -0.2700 |
-| value_logistic | value_class | ask_15_70 | 0.62 | 5 | 41 | 65.9% | 0.645 | -0.2800 |
-| value_logistic | value_class | ask_25_55 | 0.52 | 5 | 27 | 51.9% | 0.512 | -0.3700 |
-| value_logistic | value_class | ask_25_55 | 0.55 | 5 | 22 | 50.0% | 0.506 | -0.5700 |
-| value_logistic | value_class | ask_20_50 | 0.55 | 4 | 12 | 41.7% | 0.467 | -0.8500 |
-| value_logistic | value_class | ask_20_60 | 0.65 | 5 | 12 | 50.0% | 0.559 | -0.9500 |
+| winprob_logistic_evfilter | win_prob | ask_25_55 | 0.18 | 1 | 6 | 66.7% | 0.478 | +1.0100 |
+| winprob_logistic_evfilter | win_prob | ask_20_50 | 0.18 | 1 | 5 | 60.0% | 0.454 | +0.6300 |
+| winprob_logistic_evfilter | win_prob | ask_25_55 | 0.15 | 2 | 7 | 57.1% | 0.469 | +0.5800 |
+| pnl_ridge_regression | pnl_regression | ask_25_55 | 0.10 | 2 | 7 | 57.1% | 0.476 | +0.5300 |
+| pnl_ridge_regression | pnl_regression | ask_20_60 | 0.10 | 2 | 7 | 57.1% | 0.484 | +0.4700 |
+| winprob_logistic_evfilter | win_prob | ask_20_60 | 0.18 | 1 | 7 | 57.1% | 0.501 | +0.3500 |
+| winprob_logistic_evfilter | win_prob | ask_20_50 | 0.15 | 2 | 6 | 50.0% | 0.443 | +0.2200 |
+| winprob_logistic_evfilter | win_prob | ask_20_60 | 0.15 | 3 | 9 | 55.6% | 0.512 | +0.2100 |
+| pnl_ridge_regression | pnl_regression | ask_20_50 | 0.08 | 2 | 6 | 50.0% | 0.452 | +0.1700 |
+| winprob_logistic_evfilter | win_prob | ask_20_50 | 0.20 | 1 | 4 | 50.0% | 0.465 | +0.0600 |
+| pnl_ridge_regression | pnl_regression | ask_25_55 | 0.08 | 3 | 8 | 50.0% | 0.482 | -0.0200 |
+| pnl_ridge_regression | pnl_regression | ask_15_70 | 0.15 | 3 | 8 | 62.5% | 0.619 | -0.1100 |
+| winprob_logistic_evfilter | win_prob | ask_20_50 | 0.12 | 2 | 7 | 42.9% | 0.429 | -0.1400 |
+| pnl_ridge_regression | pnl_regression | ask_20_50 | 0.10 | 2 | 5 | 40.0% | 0.438 | -0.2900 |
+| pnl_hgb_regression | pnl_regression | ask_25_55 | -0.02 | 5 | 48 | 43.8% | 0.424 | -0.3100 |
+| pnl_ridge_regression | pnl_regression | ask_20_50 | 0.12 | 2 | 5 | 40.0% | 0.450 | -0.3500 |
+| pnl_ridge_regression | pnl_regression | ask_25_55 | 0.12 | 2 | 5 | 40.0% | 0.450 | -0.3500 |
+| pnl_ridge_regression | pnl_regression | ask_20_50 | 0.15 | 1 | 3 | 33.3% | 0.447 | -0.4000 |
+| winprob_logistic_evfilter | win_prob | ask_25_55 | 0.20 | 1 | 5 | 40.0% | 0.478 | -0.4900 |
+| pnl_ridge_regression | pnl_regression | ask_25_55 | 0.15 | 1 | 3 | 33.3% | 0.490 | -0.5300 |

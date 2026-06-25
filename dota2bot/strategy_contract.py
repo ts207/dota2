@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-ACTIVE_MARKET_ANCHOR_MODEL_VERSION = "market_anchor_paper_v6_gettoplive_mapequiv_ask20_50"
+ACTIVE_MARKET_ANCHOR_MODEL_VERSION = "winprob_evfilter_paper_v1_mapequiv_ask20_50_e05"
 ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE = "live_executable"
+ACTIVE_MARKET_EQUIVALENT_SCOPES = ("map_winner_explicit", "series_decider_equivalent")
+ACTIVE_PAPER_DECISIONS_NAME = "paper_validation_decisions_winprob_evfilter_mapequiv_ask20_50_e05"
+ACTIVE_SETTLED_PAPER_DECISIONS_NAME = "paper_validation_settled_decisions_winprob_evfilter_mapequiv_ask20_50_e05"
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,7 @@ class StrategySpec:
     strategy_name: str
     candidate_group: str
     entry_threshold: float
+    score_kind: str = "win_prob"
     market_scopes: tuple[str, ...] = ()
     min_ask: float | None = None
     max_ask: float | None = None
@@ -22,11 +26,12 @@ class StrategySpec:
 
 ACTIVE_MARKET_ANCHOR_SPECS = (
     StrategySpec(
-        model_name="market_gettoplive_logistic",
-        strategy_name="paper_market_gettoplive_mapequiv_ask20_50",
+        model_name="winprob_logistic_evfilter",
+        strategy_name="paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05",
         candidate_group="primary",
-        entry_threshold=0.12,
-        market_scopes=("map_winner_explicit", "series_decider_equivalent"),
+        entry_threshold=0.05,
+        score_kind="win_prob_2c",
+        market_scopes=ACTIVE_MARKET_EQUIVALENT_SCOPES,
         min_ask=0.20,
         max_ask=0.50,
     ),
@@ -35,16 +40,14 @@ ACTIVE_MARKET_ANCHOR_SPECS = (
 
 BENCHMARK_MARKET_ANCHOR_SPECS = (
     StrategySpec(
-        model_name="market_nw_kill_momentum_logistic",
-        strategy_name="paper_market_nw_kill_momentum",
-        candidate_group="benchmark",
-        entry_threshold=0.18,
-    ),
-    StrategySpec(
-        model_name="market_momentum_logistic",
-        strategy_name="paper_market_momentum",
+        model_name="market_gettoplive_logistic",
+        strategy_name="paper_market_gettoplive_mapequiv_ask20_50",
         candidate_group="benchmark",
         entry_threshold=0.12,
+        score_kind="win_prob",
+        market_scopes=ACTIVE_MARKET_EQUIVALENT_SCOPES,
+        min_ask=0.20,
+        max_ask=0.50,
     ),
 )
 
@@ -55,6 +58,10 @@ CONTROL_MARKET_ANCHOR_SPECS = (
         strategy_name="paper_market_only",
         candidate_group="control",
         entry_threshold=0.10,
+        score_kind="win_prob",
+        market_scopes=ACTIVE_MARKET_EQUIVALENT_SCOPES,
+        min_ask=0.20,
+        max_ask=0.50,
     ),
 )
 

@@ -12,6 +12,7 @@ import pandas as pd
 from .paper_strategy_logger import (
     DEFAULT_ELIGIBILITY_MODE,
     EXECUTABLE_BACKTEST_PATH,
+    add_model_scores,
     prepare_paper_feature_frame,
     strategy_filter_mask,
     train_paper_model_bundle,
@@ -21,7 +22,7 @@ from .strategy_contract import ACTIVE_MARKET_ANCHOR_SPECS
 
 
 DEFAULT_LIVE_SETTLED_PATH = Path("logs/live_settled_side_snapshots/latest.parquet")
-ACTIVE_STRATEGY_ELIGIBILITY_MODE = DEFAULT_ELIGIBILITY_MODE
+ACTIVE_STRATEGY_ELIGIBILITY_MODE = "historical_executable"
 
 
 def run_active_strategy_backtest(
@@ -65,19 +66,20 @@ def _score_active_strategy_rows(*, rows: pd.DataFrame, executable_path: Path) ->
     spec = ACTIVE_MARKET_ANCHOR_SPECS[0]
     bundle = train_paper_model_bundle(executable_path=executable_path, specs=list(ACTIVE_MARKET_ANCHOR_SPECS))
     model, features = bundle.models[spec.model_name]
-    scored = prepare_paper_feature_frame(rows, eligibility_mode=ACTIVE_STRATEGY_ELIGIBILITY_MODE)
+    scored = prepare_paper_feature_frame(rows, eligibility_mode=DEFAULT_ELIGIBILITY_MODE)
     for col in features:
         if col not in scored.columns:
             scored[col] = pd.NA
-    scored["fair_prob"] = model.predict_proba(scored[features])[:, 1]
-    scored["edge"] = scored["fair_prob"] - scored["book_best_ask"]
+    scored = add_model_scores(scored, model, features, score_kind=bundle.score_kinds.get(spec.model_name, spec.score_kind))
+    scored["active_backtest_tradable"] = scored["tradable_research"].fillna(False).astype(bool)
+    scored["eligibility_mode"] = ACTIVE_STRATEGY_ELIGIBILITY_MODE
     return scored
 
 
 def _summarize_threshold(scored: pd.DataFrame, threshold: float) -> dict[str, Any]:
     spec = ACTIVE_MARKET_ANCHOR_SPECS[0]
     signal = scored[
-        scored["tradable_paper"].fillna(False).astype(bool)
+        scored["active_backtest_tradable"].fillna(False).astype(bool)
         & strategy_filter_mask(scored, spec)
         & (scored["edge"] >= threshold)
     ].copy()

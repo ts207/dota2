@@ -7,8 +7,11 @@ candidate definitions and writes a decision ledger; it does not place orders.
 from __future__ import annotations
 
 import argparse
+import json
+import pickle
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from dataclasses import field
 from hashlib import sha1
 from pathlib import Path
 from typing import Any
@@ -21,6 +24,7 @@ from .logging_store import ParquetAppendLog
 from .schemas import DECISION_COLUMNS, SIDE_SNAPSHOT_COLUMNS
 from .settle_live import normalize_side_snapshot_frame
 from .side_features import RESEARCH_MIN_GAME_TIME_SEC, add_side_features
+from .executable_value_model import SLIPPAGE_2C, train_winprob_logistic_evfilter_model
 from .strategy_contract import (
     ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE,
     ACTIVE_MARKET_ANCHOR_MODEL_VERSION,
@@ -32,6 +36,9 @@ from .transition_features import add_transition_features
 
 EXECUTABLE_BACKTEST_PATH = Path("datasets/clean_executable_backtest_dataset/clean_backtest_side_snapshots.parquet")
 MODEL_VERSION = ACTIVE_MARKET_ANCHOR_MODEL_VERSION
+DEFAULT_MODEL_ARTIFACT_DIR = Path("models/market_anchor") / MODEL_VERSION
+MODEL_BUNDLE_FILENAME = "model_bundle.pkl"
+MODEL_MANIFEST_FILENAME = "manifest.json"
 DEFAULT_INPUT_NAME = "live_side_snapshots"
 DEFAULT_OUTPUT_NAME = "strategy_decisions"
 DEFAULT_ELIGIBILITY_MODE = ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE
@@ -47,6 +54,7 @@ class PaperModelBundle:
     specs: list[PaperModelSpec]
     training_cutoff: str
     model_version: str = MODEL_VERSION
+    score_kinds: dict[str, str] = field(default_factory=dict)
 
 
 PAPER_MODEL_SPECS = list(PAPER_MARKET_ANCHOR_SPECS)
@@ -64,7 +72,14 @@ def train_paper_model_bundle(
     frame = load_analysis_frame(executable_path)
     registry = market_models()
     trained: dict[str, tuple[Any, list[str]]] = {}
+    score_kinds: dict[str, str] = {}
+    prepared_training = prepare_paper_feature_frame(pd.read_parquet(executable_path))
     for spec in specs:
+        if spec.model_name == "winprob_logistic_evfilter":
+            model, features = train_winprob_logistic_evfilter_model(prepared_training)
+            trained[spec.model_name] = (model, features)
+            score_kinds[spec.model_name] = spec.score_kind
+            continue
         if spec.model_name not in registry:
             raise KeyError(f"unknown paper model: {spec.model_name}")
         model, features = registry[spec.model_name]
@@ -73,9 +88,69 @@ def train_paper_model_bundle(
             raise ValueError(f"training frame missing features for {spec.model_name}: {missing}")
         model.fit(frame[features], frame["settled_win"].astype(int))
         trained[spec.model_name] = (model, features)
+        score_kinds[spec.model_name] = spec.score_kind
 
     training_cutoff = str(frame["received_at_utc"].max()) if "received_at_utc" in frame.columns else ""
-    return PaperModelBundle(models=trained, specs=specs, training_cutoff=training_cutoff)
+    return PaperModelBundle(models=trained, specs=specs, training_cutoff=training_cutoff, score_kinds=score_kinds)
+
+
+def save_paper_model_bundle(
+    bundle: PaperModelBundle,
+    *,
+    artifact_dir: Path = DEFAULT_MODEL_ARTIFACT_DIR,
+    executable_path: Path = EXECUTABLE_BACKTEST_PATH,
+) -> dict[str, Any]:
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    bundle_path = artifact_dir / MODEL_BUNDLE_FILENAME
+    manifest_path = artifact_dir / MODEL_MANIFEST_FILENAME
+    with bundle_path.open("wb") as fh:
+        pickle.dump(bundle, fh)
+    manifest = {
+        "model_version": bundle.model_version,
+        "training_cutoff": bundle.training_cutoff,
+        "executable_path": str(executable_path),
+        "models": {
+            model_name: {
+                "features": features,
+                "score_kind": bundle.score_kinds.get(model_name),
+            }
+            for model_name, (_, features) in bundle.models.items()
+        },
+        "specs": [asdict(spec) for spec in bundle.specs],
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    return {
+        "artifact_dir": str(artifact_dir),
+        "bundle_path": str(bundle_path),
+        "manifest_path": str(manifest_path),
+        "model_version": bundle.model_version,
+        "training_cutoff": bundle.training_cutoff,
+        "models": sorted(bundle.models),
+    }
+
+
+def train_and_save_paper_model_bundle(
+    *,
+    executable_path: Path = EXECUTABLE_BACKTEST_PATH,
+    artifact_dir: Path = DEFAULT_MODEL_ARTIFACT_DIR,
+    specs: list[PaperModelSpec] | None = None,
+) -> dict[str, Any]:
+    bundle = train_paper_model_bundle(executable_path=executable_path, specs=specs)
+    return save_paper_model_bundle(bundle, artifact_dir=artifact_dir, executable_path=executable_path)
+
+
+def load_paper_model_bundle(*, artifact_dir: Path = DEFAULT_MODEL_ARTIFACT_DIR) -> PaperModelBundle:
+    bundle_path = artifact_dir / MODEL_BUNDLE_FILENAME
+    if not bundle_path.exists():
+        raise FileNotFoundError(
+            f"paper model artifact not found: {bundle_path}. "
+            "Run `python -m dota2bot freeze-paper-model` before paper logging."
+        )
+    with bundle_path.open("rb") as fh:
+        bundle = pickle.load(fh)
+    if bundle.model_version != MODEL_VERSION:
+        raise ValueError(f"artifact model_version={bundle.model_version!r} does not match active {MODEL_VERSION!r}")
+    return bundle
 
 
 def score_paper_decisions(
@@ -96,8 +171,8 @@ def score_paper_decisions(
             if col not in featured.columns:
                 featured[col] = np.nan
         scored = featured.copy()
-        scored["fair_prob"] = model.predict_proba(scored[features])[:, 1]
-        scored["edge"] = scored["fair_prob"] - scored["book_best_ask"]
+        score_kind = bundle.score_kinds.get(spec.model_name, spec.score_kind)
+        scored = add_model_scores(scored, model, features, score_kind=score_kind)
         scored["strategy_filter"] = strategy_filter_mask(scored, spec)
         scored["signal"] = scored["tradable_paper"] & scored["strategy_filter"] & (scored["edge"] >= spec.entry_threshold)
         scored["reason"] = scored.apply(lambda row: _decision_reason(row, spec.entry_threshold), axis=1)
@@ -109,6 +184,19 @@ def score_paper_decisions(
         return out
     out["signal_group"] = _signal_groups(out)
     return out[DECISION_COLUMNS]
+
+
+def add_model_scores(frame: pd.DataFrame, model: Any, features: list[str], *, score_kind: str) -> pd.DataFrame:
+    scored = frame.copy()
+    model_score = model.predict_proba(scored[features])[:, 1]
+    scored["fair_prob"] = model_score
+    if score_kind == "win_prob_2c":
+        scored["edge"] = scored["fair_prob"] - scored["book_best_ask"] - SLIPPAGE_2C
+    elif score_kind == "win_prob":
+        scored["edge"] = scored["fair_prob"] - scored["book_best_ask"]
+    else:
+        raise ValueError(f"unknown score_kind={score_kind!r}")
+    return scored
 
 
 def prepare_paper_feature_frame(
@@ -166,7 +254,7 @@ def run_paper_log(
     logs_root: Path = Path("logs"),
     input_name: str = DEFAULT_INPUT_NAME,
     output_name: str = DEFAULT_OUTPUT_NAME,
-    executable_path: Path = EXECUTABLE_BACKTEST_PATH,
+    artifact_dir: Path = DEFAULT_MODEL_ARTIFACT_DIR,
     batch_rows: int = 5000,
     signals_only: bool = False,
     limit: int | None = None,
@@ -191,7 +279,7 @@ def run_paper_log(
             "max_received_at_ns": None,
         }
 
-    bundle = train_paper_model_bundle(executable_path=executable_path)
+    bundle = load_paper_model_bundle(artifact_dir=artifact_dir)
     decisions = score_paper_decisions(frame, bundle, eligibility_mode=eligibility_mode)
     if signals_only:
         decisions = decisions[decisions["signal"].fillna(False).astype(bool)].copy()
@@ -236,7 +324,7 @@ def run_paper_log_loop(
     logs_root: Path = Path("logs"),
     input_name: str = DEFAULT_INPUT_NAME,
     output_name: str = DEFAULT_OUTPUT_NAME,
-    executable_path: Path = EXECUTABLE_BACKTEST_PATH,
+    artifact_dir: Path = DEFAULT_MODEL_ARTIFACT_DIR,
     batch_rows: int = 5000,
     signals_only: bool = False,
     limit: int | None = None,
@@ -265,7 +353,7 @@ def run_paper_log_loop(
             logs_root=logs_root,
             input_name=input_name,
             output_name=output_name,
-            executable_path=executable_path,
+            artifact_dir=artifact_dir,
             batch_rows=batch_rows,
             signals_only=signals_only,
             limit=limit,
@@ -285,13 +373,18 @@ def add_paper_log_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--logs-root", default="logs")
     parser.add_argument("--input-name", default=DEFAULT_INPUT_NAME)
     parser.add_argument("--output-name", default=DEFAULT_OUTPUT_NAME)
-    parser.add_argument("--executable-path", default=str(EXECUTABLE_BACKTEST_PATH))
+    parser.add_argument("--artifact-dir", default=str(DEFAULT_MODEL_ARTIFACT_DIR))
     parser.add_argument("--batch-rows", type=int, default=5000)
     parser.add_argument("--signals-only", action="store_true")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--min-received-at-ns", type=int, default=None)
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--interval-sec", type=float, default=30.0)
+
+
+def add_freeze_paper_model_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--executable-path", default=str(EXECUTABLE_BACKTEST_PATH))
+    parser.add_argument("--artifact-dir", default=str(DEFAULT_MODEL_ARTIFACT_DIR))
 
 
 def _decision_row(row: dict[str, Any], spec: PaperModelSpec, bundle: PaperModelBundle) -> dict[str, Any]:

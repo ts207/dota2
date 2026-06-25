@@ -1,0 +1,99 @@
+{
+  "executable_path": "datasets/clean_executable_backtest_dataset/clean_backtest_side_snapshots.parquet",
+  "model_version": "winprob_evfilter_paper_v1_mapequiv_ask20_50_e05",
+  "models": {
+    "market_gettoplive_logistic": {
+      "features": [
+        "logit_market_price",
+        "book_spread",
+        "book_ask_size_log",
+        "book_age_s",
+        "game_time_sec",
+        "side_nw",
+        "side_mom_100",
+        "side_mom_300",
+        "side_score",
+        "total_kills",
+        "side_tower",
+        "side_rax",
+        "structure_score"
+      ],
+      "score_kind": "win_prob"
+    },
+    "market_only_logistic": {
+      "features": [
+        "logit_market_price",
+        "book_spread",
+        "book_ask_size_log",
+        "book_age_s",
+        "game_time_sec"
+      ],
+      "score_kind": "win_prob"
+    },
+    "winprob_logistic_evfilter": {
+      "features": [
+        "logit_market_price",
+        "book_spread",
+        "book_ask_size_log",
+        "book_age_s",
+        "game_time_sec",
+        "book_best_ask",
+        "book_best_bid",
+        "side_nw",
+        "side_score",
+        "side_mom_100",
+        "side_mom_300",
+        "side_kill_mom",
+        "side_tower",
+        "side_rax",
+        "structure_score",
+        "total_kills",
+        "market_scope",
+        "current_game_number"
+      ],
+      "score_kind": "win_prob_2c"
+    }
+  },
+  "specs": [
+    {
+      "candidate_group": "primary",
+      "entry_threshold": 0.05,
+      "market_scopes": [
+        "map_winner_explicit",
+        "series_decider_equivalent"
+      ],
+      "max_ask": 0.5,
+      "min_ask": 0.2,
+      "model_name": "winprob_logistic_evfilter",
+      "score_kind": "win_prob_2c",
+      "strategy_name": "paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05"
+    },
+    {
+      "candidate_group": "benchmark",
+      "entry_threshold": 0.12,
+      "market_scopes": [
+        "map_winner_explicit",
+        "series_decider_equivalent"
+      ],
+      "max_ask": 0.5,
+      "min_ask": 0.2,
+      "model_name": "market_gettoplive_logistic",
+      "score_kind": "win_prob",
+      "strategy_name": "paper_market_gettoplive_mapequiv_ask20_50"
+    },
+    {
+      "candidate_group": "control",
+      "entry_threshold": 0.1,
+      "market_scopes": [
+        "map_winner_explicit",
+        "series_decider_equivalent"
+      ],
+      "max_ask": 0.5,
+      "min_ask": 0.2,
+      "model_name": "market_only_logistic",
+      "score_kind": "win_prob",
+      "strategy_name": "paper_market_only"
+    }
+  ],
+  "training_cutoff": "2026-06-05T13:23:44.613+00:00"
+}
