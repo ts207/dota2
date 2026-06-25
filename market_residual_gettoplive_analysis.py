@@ -15,6 +15,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from dota2bot.side_features import RESEARCH_MIN_GAME_TIME_SEC, add_side_features
+from dota2bot.strategy_contract import ACTIVE_MARKET_ANCHOR_MODEL_NAMES
 from dota2bot.transition_features import add_transition_features
 from walk_forward_model_research import (
     EDGE_THRESHOLDS,
@@ -111,11 +112,7 @@ CATEGORICAL_FEATURES: list[str] = []
 CATEGORICAL_FEATURES_WITH_BUCKET = ["label_market_bucket"]
 TRANSITION_CATEGORICAL_FEATURES = ["score_nw_lag_type", "transition_signal_type"]
 TRANSITION_CATEGORICAL_FEATURES_WITH_BUCKET = ["label_market_bucket", "score_nw_lag_type", "transition_signal_type"]
-PRIMARY_NO_BUCKET_MODELS = [
-    "market_nw_kill_momentum_logistic",
-    "market_momentum_logistic",
-    "market_gettoplive_logistic",
-]
+PRIMARY_NO_BUCKET_MODELS = list(ACTIVE_MARKET_ANCHOR_MODEL_NAMES)
 SECONDARY_NO_BUCKET_MODELS = [
     "market_nw_logistic",
     "market_score_logistic",

@@ -61,6 +61,7 @@ async def run_live_logger(
     markets_path: Path = Path("datasets/clean_executable_backtest_dataset/clean_markets.parquet"),
     logs_root: Path = Path("logs"),
     interval_sec: float = 5.0,
+    flush_interval_sec: float = 60.0,
     once: bool = False,
     book_only: bool = False,
     max_tokens: int | None = None,
@@ -94,6 +95,7 @@ async def run_live_logger(
         last_seen_games: dict[str, dict[str, Any]] = {}
         last_state_hash_by_match: dict[str, str] = {}
         last_state_change_ns_by_match: dict[str, int] = {}
+        last_flush_ns = time.time_ns()
         cycle = 0
         while True:
             cycle += 1
@@ -231,7 +233,11 @@ async def run_live_logger(
             health["one_sided_book_rows"] = sum(1 for row in cycle_side_rows if not row.get("has_two_sided_book"))
             health["executable_side_rows"] = sum(1 for row in cycle_side_rows if row.get("executable_snapshot"))
             logs.live_health.append(health)
-            logs.flush()
+            now_ns = time.time_ns()
+            should_flush = once or (now_ns - last_flush_ns >= int(flush_interval_sec * 1_000_000_000))
+            if should_flush:
+                logs.flush()
+                last_flush_ns = now_ns
             if once:
                 return counters
             await asyncio.sleep(interval_sec)
@@ -853,6 +859,12 @@ def add_live_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--markets", default="datasets/clean_executable_backtest_dataset/clean_markets.parquet")
     parser.add_argument("--logs-root", default="logs")
     parser.add_argument("--interval-sec", type=float, default=5.0)
+    parser.add_argument(
+        "--flush-interval-sec",
+        type=float,
+        default=60.0,
+        help="flush buffered parquet logs at most this often; reduces WSL small-file churn",
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--book-only", action="store_true")
     parser.add_argument("--max-tokens", type=int, default=None)

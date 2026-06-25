@@ -5,9 +5,22 @@ import json
 import os
 from pathlib import Path
 
+from .active_strategy_backtest import (
+    add_backtest_active_strategy_args,
+    format_active_strategy_backtest,
+    run_active_strategy_backtest,
+)
 from .audit_logs import add_audit_args, run_audit_logs
 from .datasets import extract_datasets
+from .decision_reports import (
+    add_report_decision_args,
+    add_settle_decision_args,
+    run_report_decisions,
+    run_settle_decisions,
+    run_settle_decisions_loop,
+)
 from .live_logger import add_live_args, run_live_logger
+from .paper_strategy_logger import add_paper_log_args, run_paper_log, run_paper_log_loop
 from .replay_bot import run_replay
 from .settle_live import add_settle_args, run_settle_live, run_settle_live_loop
 
@@ -47,6 +60,18 @@ def main() -> None:
     settle = sub.add_parser("settle-live", help="join final match outcomes into live side snapshots")
     add_settle_args(settle)
 
+    paper = sub.add_parser("paper-log", help="score live side snapshots into a paper decision ledger")
+    add_paper_log_args(paper)
+
+    settle_decisions = sub.add_parser("settle-decisions", help="join settled side outcomes into paper decisions")
+    add_settle_decision_args(settle_decisions)
+
+    report_decisions = sub.add_parser("report-decisions", help="summarize paper decision performance")
+    add_report_decision_args(report_decisions)
+
+    backtest_active = sub.add_parser("backtest-active-strategy", help="simple historical backtest for the single active strategy")
+    add_backtest_active_strategy_args(backtest_active)
+
     args = parser.parse_args()
     if args.command == "extract":
         print(json.dumps(extract_datasets(), indent=2, sort_keys=True))
@@ -61,6 +86,7 @@ def main() -> None:
                 markets_path=Path(args.markets),
                 logs_root=Path(args.logs_root),
                 interval_sec=args.interval_sec,
+                flush_interval_sec=args.flush_interval_sec,
                 once=args.once,
                 book_only=args.book_only,
                 max_tokens=args.max_tokens,
@@ -99,6 +125,76 @@ def main() -> None:
                 sort_keys=True,
             )
         )
+    elif args.command == "paper-log":
+        if args.loop:
+            run_paper_log_loop(
+                logs_root=Path(args.logs_root),
+                input_name=args.input_name,
+                output_name=args.output_name,
+                executable_path=Path(args.executable_path),
+                batch_rows=args.batch_rows,
+                signals_only=args.signals_only,
+                limit=args.limit,
+                min_received_at_ns=args.min_received_at_ns,
+                eligibility_mode=args.eligibility_mode,
+                interval_sec=args.interval_sec,
+            )
+            return
+        print(
+            json.dumps(
+                run_paper_log(
+                    logs_root=Path(args.logs_root),
+                    input_name=args.input_name,
+                    output_name=args.output_name,
+                    executable_path=Path(args.executable_path),
+                    batch_rows=args.batch_rows,
+                    signals_only=args.signals_only,
+                    limit=args.limit,
+                    min_received_at_ns=args.min_received_at_ns,
+                    eligibility_mode=args.eligibility_mode,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif args.command == "settle-decisions":
+        if args.loop:
+            run_settle_decisions_loop(
+                logs_root=Path(args.logs_root),
+                decisions_name=args.decisions_name,
+                settled_side_name=args.settled_side_name,
+                output_name=args.output_name,
+                interval_sec=args.interval_sec,
+            )
+            return
+        print(
+            json.dumps(
+                run_settle_decisions(
+                    logs_root=Path(args.logs_root),
+                    decisions_name=args.decisions_name,
+                    settled_side_name=args.settled_side_name,
+                    output_name=args.output_name,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif args.command == "report-decisions":
+        print(
+            run_report_decisions(
+                logs_root=Path(args.logs_root),
+                decisions_name=args.decisions_name,
+                output_format=args.format,
+            )
+        )
+    elif args.command == "backtest-active-strategy":
+        result = run_active_strategy_backtest(
+            executable_path=Path(args.executable_path),
+            live_settled_path=Path(args.live_settled_path),
+            include_live=not args.no_live,
+            eligibility_mode=args.eligibility_mode,
+        )
+        print(format_active_strategy_backtest(result, output_format=args.format))
 
 
 if __name__ == "__main__":
