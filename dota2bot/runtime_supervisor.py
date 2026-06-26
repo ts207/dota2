@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .paper_strategy_logger import DEFAULT_MODEL_ARTIFACT_DIR, validate_paper_model_artifact
+from .paper_exit_logger import DEFAULT_OUTPUT_NAME as DEFAULT_EXIT_OUTPUT_NAME
 from .strategy_contract import ACTIVE_PAPER_DECISIONS_NAME, ACTIVE_SETTLED_PAPER_DECISIONS_NAME
 
 
@@ -93,6 +94,26 @@ def runtime_processes(logs_root: Path) -> tuple[RuntimeProcess, ...]:
                 ACTIVE_PAPER_DECISIONS_NAME,
                 "--output-name",
                 ACTIVE_SETTLED_PAPER_DECISIONS_NAME,
+                "--loop",
+                "--interval-sec",
+                "300",
+            ),
+        ),
+        RuntimeProcess(
+            name="paper-exit-log",
+            pid_file="paper_exit_log.pid",
+            log_file="paper_exit_log.out",
+            args=(
+                sys.executable,
+                "-m",
+                "dota2bot",
+                "paper-exit-log",
+                "--logs-root",
+                logs,
+                "--input-name",
+                ACTIVE_SETTLED_PAPER_DECISIONS_NAME,
+                "--output-name",
+                DEFAULT_EXIT_OUTPUT_NAME,
                 "--loop",
                 "--interval-sec",
                 "300",

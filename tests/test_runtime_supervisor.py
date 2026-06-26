@@ -11,7 +11,7 @@ def test_runtime_status_reports_stopped_for_missing_pid_files(tmp_path: Path):
     result = run_runtime_command(action="status", logs_root=tmp_path)
 
     assert result["action"] == "status"
-    assert len(result["processes"]) == 4
+    assert len(result["processes"]) == 5
     assert not any(row["running"] for row in result["processes"])
 
 

@@ -20,10 +20,15 @@ class FixedProbModel:
 
 
 def test_paper_calibration_report_outputs_ask_and_edge_buckets(tmp_path: Path):
-    rows = [_side_row(received_at_ns=100), _side_row(received_at_ns=200)]
-    rows[0]["settled_win"] = True
-    rows[1]["settled_win"] = False
-    rows[1]["executable_snapshot"] = False
+    rows = [
+        _side_row(match_id="m1", received_at_ns=50, game_time_sec=800, radiant_lead=4000),
+        _side_row(match_id="m1", received_at_ns=100, game_time_sec=900, radiant_lead=5000),
+        _side_row(match_id="m2", received_at_ns=150, game_time_sec=800, radiant_lead=4000),
+        _side_row(match_id="m2", received_at_ns=200, game_time_sec=900, radiant_lead=5000),
+    ]
+    rows[1]["settled_win"] = True
+    rows[3]["settled_win"] = False
+    rows[3]["executable_snapshot"] = False
     executable_path = tmp_path / "clean.parquet"
     pd.DataFrame(rows).to_parquet(executable_path, index=False)
     bundle = PaperModelBundle(
@@ -82,11 +87,17 @@ def test_paper_calibration_report_outputs_ask_and_edge_buckets(tmp_path: Path):
     assert live_primary_rows[0]["rows"] == 1
 
 
-def _side_row(received_at_ns: int) -> dict:
+def _side_row(
+    *,
+    match_id: str,
+    received_at_ns: int,
+    game_time_sec: int,
+    radiant_lead: int,
+) -> dict:
     row = {col: None for col in SIDE_SNAPSHOT_COLUMNS}
     row.update(
         {
-            "match_id": "m1",
+            "match_id": match_id,
             "market_id": "mk1",
             "label_market_bucket": "MAP_WINNER",
             "market_scope": "map_winner_explicit",
@@ -95,7 +106,7 @@ def _side_row(received_at_ns: int) -> dict:
             "side": "YES",
             "received_at_utc": "2026-06-24T00:00:00+00:00",
             "received_at_ns": received_at_ns,
-            "game_time_sec": 900,
+            "game_time_sec": game_time_sec,
             "book_received_at_ns": 900,
             "book_age_ms": 1000.0,
             "book_best_bid": 0.49,
@@ -105,8 +116,8 @@ def _side_row(received_at_ns: int) -> dict:
             "executable_snapshot": True,
             "quality_reason": "ok",
             "side_is_radiant": True,
-            "radiant_lead": 5000,
-            "net_worth_diff": 5000,
+            "radiant_lead": radiant_lead,
+            "net_worth_diff": radiant_lead,
             "radiant_score": 20,
             "dire_score": 15,
             "building_state": None,

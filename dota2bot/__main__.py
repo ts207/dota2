@@ -13,14 +13,33 @@ from .active_strategy_backtest import (
     run_active_strategy_threshold_sweep,
 )
 from .audit_logs import add_audit_args, run_audit_logs
+from .backtest_exits import (
+    add_backtest_exit_args,
+    format_exit_backtest,
+    parse_min_hold_values,
+    run_exit_backtest,
+)
 from .calibration_report import add_paper_calibration_args, run_paper_calibration_report
 from .datasets import extract_datasets
 from .decision_reports import (
+    add_paper_validation_report_args,
     add_report_decision_args,
     add_settle_decision_args,
+    run_paper_validation_report,
     run_report_decisions,
     run_settle_decisions,
     run_settle_decisions_loop,
+)
+from .entry_quality_report import (
+    add_entry_quality_report_args,
+    format_entry_quality_report,
+    run_entry_quality_report,
+)
+from .gettoplive_markout_report import (
+    add_gettoplive_markout_args,
+    format_gettoplive_markout_report,
+    parse_horizons,
+    run_gettoplive_markout_report,
 )
 from .live_logger import add_live_args, run_live_logger
 from .paper_strategy_logger import (
@@ -29,6 +48,13 @@ from .paper_strategy_logger import (
     run_paper_log,
     run_paper_log_loop,
     train_and_save_paper_model_bundle,
+)
+from .paper_exit_logger import (
+    add_paper_exit_log_args,
+    add_paper_exit_report_args,
+    run_paper_exit_log,
+    run_paper_exit_log_loop,
+    run_paper_exit_report,
 )
 from .replay_bot import run_replay
 from .runtime_supervisor import add_runtime_args, format_runtime_result, run_runtime_command
@@ -89,8 +115,26 @@ def main() -> None:
     report_decisions = sub.add_parser("report-decisions", help="summarize paper decision performance")
     add_report_decision_args(report_decisions)
 
+    paper_validation_report = sub.add_parser("paper-validation-report", help="summarize forward paper validation status")
+    add_paper_validation_report_args(paper_validation_report)
+
+    paper_exit_log = sub.add_parser("paper-exit-log", help="score active paper entries against paper exit rules")
+    add_paper_exit_log_args(paper_exit_log)
+
+    paper_exit_report = sub.add_parser("paper-exit-report", help="summarize paper exit rule performance")
+    add_paper_exit_report_args(paper_exit_report)
+
     backtest_active = sub.add_parser("backtest-active-strategy", help="simple historical backtest for the single active strategy")
     add_backtest_active_strategy_args(backtest_active)
+
+    backtest_exits = sub.add_parser("backtest-exits", help="research-only sell-at-bid exit backtest")
+    add_backtest_exit_args(backtest_exits)
+
+    entry_quality = sub.add_parser("entry-quality-report", help="research-only active entry quality diagnostics")
+    add_entry_quality_report_args(entry_quality)
+
+    markout = sub.add_parser("gettoplive-markout-report", help="research-only GetTopLive state-change future-price markouts")
+    add_gettoplive_markout_args(markout)
 
     args = parser.parse_args()
     if args.command == "extract":
@@ -237,6 +281,46 @@ def main() -> None:
                 output_format=args.format,
             )
         )
+    elif args.command == "paper-validation-report":
+        print(
+            run_paper_validation_report(
+                logs_root=Path(args.logs_root),
+                decisions_name=args.decisions_name,
+                output_format=args.format,
+                detail_limit=args.detail_limit,
+            )
+        )
+    elif args.command == "paper-exit-log":
+        if args.loop:
+            run_paper_exit_log_loop(
+                logs_root=Path(args.logs_root),
+                input_name=args.input_name,
+                side_name=args.side_name,
+                output_name=args.output_name,
+                interval_sec=args.interval_sec,
+            )
+            return
+        print(
+            json.dumps(
+                run_paper_exit_log(
+                    logs_root=Path(args.logs_root),
+                    input_name=args.input_name,
+                    side_name=args.side_name,
+                    output_name=args.output_name,
+                    batch_rows=args.batch_rows,
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif args.command == "paper-exit-report":
+        print(
+            run_paper_exit_report(
+                logs_root=Path(args.logs_root),
+                exit_name=args.exit_name,
+                output_format=args.format,
+            )
+        )
     elif args.command == "backtest-active-strategy":
         thresholds = parse_thresholds(args.thresholds)
         if thresholds is None:
@@ -253,6 +337,32 @@ def main() -> None:
                 include_live=not args.no_live,
             )
         print(format_active_strategy_backtest(result, output_format=args.format))
+    elif args.command == "backtest-exits":
+        result = run_exit_backtest(
+            executable_path=Path(args.executable_path),
+            live_settled_path=Path(args.live_settled_path),
+            include_live=args.include_live,
+            min_hold_sec_values=parse_min_hold_values(args.min_hold_sec),
+        )
+        print(format_exit_backtest(result, output_format=args.format))
+    elif args.command == "entry-quality-report":
+        result = run_entry_quality_report(
+            executable_path=Path(args.executable_path),
+            live_settled_path=Path(args.live_settled_path),
+            include_live=args.include_live,
+            min_trades=args.min_trades,
+        )
+        print(format_entry_quality_report(result, output_format=args.format))
+    elif args.command == "gettoplive-markout-report":
+        result = run_gettoplive_markout_report(
+            executable_path=Path(args.executable_path),
+            live_settled_path=Path(args.live_settled_path),
+            include_live=args.include_live,
+            horizons_sec=parse_horizons(args.horizons_sec),
+            min_game_time_sec=args.min_game_time_sec,
+            min_events=args.min_events,
+        )
+        print(format_gettoplive_markout_report(result, output_format=args.format))
 
 
 if __name__ == "__main__":

@@ -141,6 +141,45 @@ DECISION_COLUMNS = [
 ]
 
 
+EXIT_DECISION_COLUMNS = [
+    "exit_decision_id",
+    "entry_decision_id",
+    "exit_strategy_name",
+    "model_name",
+    "model_version",
+    "match_id",
+    "market_id",
+    "label_market_bucket",
+    "current_game_number",
+    "map_exposure_id",
+    "canonical_exposure_id",
+    "token_id",
+    "side",
+    "entry_received_at_utc",
+    "entry_received_at_ns",
+    "entry_game_time_sec",
+    "entry_ask",
+    "entry_bid",
+    "entry_edge",
+    "entry_side_mom_100",
+    "exit_signal",
+    "exit_reason",
+    "exit_received_at_utc",
+    "exit_received_at_ns",
+    "exit_game_time_sec",
+    "exit_bid",
+    "exit_bid_size",
+    "exit_book_spread",
+    "exit_book_age_ms",
+    "exit_side_mom_100",
+    "exit_side_mom_300",
+    "settled_win",
+    "hold_pnl_2c",
+    "exit_pnl_2c",
+    "pnl_delta_vs_hold",
+]
+
+
 LIVE_BOOK_COLUMNS = [
     "book_event_id",
     "asset_id",

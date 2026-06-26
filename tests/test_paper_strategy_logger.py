@@ -9,6 +9,7 @@ import pytest
 
 from dota2bot.decision_reports import first_global_signal_trades, first_signal_trades, run_report_decisions, run_settle_decisions
 from dota2bot.paper_strategy_logger import (
+    PAPER_DECISION_MODEL_SPECS,
     PAPER_MODEL_SPECS,
     PaperModelBundle,
     add_model_scores,
@@ -16,6 +17,7 @@ from dota2bot.paper_strategy_logger import (
     run_paper_log,
     save_paper_model_bundle,
     score_paper_decisions,
+    strategy_filter_mask,
     validate_paper_model_artifact,
 )
 from dota2bot.schemas import DECISION_COLUMNS, SIDE_SNAPSHOT_COLUMNS
@@ -25,7 +27,9 @@ from dota2bot.strategy_contract import (
     ACTIVE_MARKET_ANCHOR_SPECS,
     BENCHMARK_MARKET_ANCHOR_SPECS,
     CONTROL_MARKET_ANCHOR_SPECS,
+    PAPER_DECISION_SPECS,
     PAPER_MARKET_ANCHOR_SPECS,
+    PAPER_RULE_SPECS,
 )
 
 
@@ -48,26 +52,45 @@ def test_score_paper_decisions_logs_paper_validation_suite():
     decisions = score_paper_decisions(frame, bundle)
 
     assert list(decisions.columns) == DECISION_COLUMNS
-    assert len(decisions) == len(PAPER_MODEL_SPECS)
-    assert decisions["signal"].all()
-    assert decisions["signal_group"].unique().tolist() == ["primary_benchmark_control"]
-    assert set(decisions["model_name"]) == {spec.model_name for spec in PAPER_MODEL_SPECS}
+    assert len(decisions) == len(PAPER_DECISION_MODEL_SPECS)
+    assert decisions.set_index("model_name")["signal"].to_dict() == {
+        "winprob_logistic_evfilter": False,
+        "market_gettoplive_logistic": True,
+        "market_only_logistic": True,
+        "gettoplive_kill_mom_favorite_hold_rule": False,
+    }
+    assert set(decisions["model_name"]) == {spec.model_name for spec in PAPER_DECISION_MODEL_SPECS}
+    assert decisions.loc[decisions["signal"].fillna(False), "signal_group"].unique().tolist() == ["benchmark_and_control"]
     assert decisions["entry_threshold"].notna().all()
 
 
 def test_paper_specs_use_active_strategy_contract():
     assert PAPER_MODEL_SPECS == list(PAPER_MARKET_ANCHOR_SPECS)
+    assert PAPER_DECISION_MODEL_SPECS == list(PAPER_DECISION_SPECS)
     assert len(PAPER_MODEL_SPECS) == 3
+    assert len(PAPER_RULE_SPECS) == 1
     assert PAPER_MODEL_SPECS[0].model_name == "winprob_logistic_evfilter"
     assert PAPER_MODEL_SPECS[0].entry_threshold == 0.05
     assert PAPER_MODEL_SPECS[0].score_kind == "win_prob_2c"
     assert PAPER_MODEL_SPECS[0].market_scopes == ("map_winner_explicit", "series_decider_equivalent")
     assert PAPER_MODEL_SPECS[0].min_ask == 0.20
     assert PAPER_MODEL_SPECS[0].max_ask == 0.50
+    assert PAPER_MODEL_SPECS[0].min_game_time_sec == 900
+    assert PAPER_MODEL_SPECS[0].min_side_mom_100 == 0.0
     assert list(PAPER_MODEL_SPECS[1:2]) == list(BENCHMARK_MARKET_ANCHOR_SPECS)
     assert list(PAPER_MODEL_SPECS[2:]) == list(CONTROL_MARKET_ANCHOR_SPECS)
     assert BENCHMARK_MARKET_ANCHOR_SPECS[0].model_name == "market_gettoplive_logistic"
-    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "winprob_evfilter_paper_v1_mapequiv_ask20_50_e05"
+    rule = PAPER_RULE_SPECS[0]
+    assert rule.model_name == "gettoplive_kill_mom_favorite_hold_rule"
+    assert rule.strategy_name == "paper_gettoplive_kill_mom_favorite_hold_v1"
+    assert rule.candidate_group == "gettoplive_candidate"
+    assert rule.score_kind == "rule_binary"
+    assert rule.min_ask == 0.50
+    assert rule.max_ask == 0.80
+    assert rule.min_side_kill_mom == 1.0
+    assert rule.max_source_update_age_sec == 5.0
+    assert rule.deterministic_rule is True
+    assert ACTIVE_MARKET_ANCHOR_MODEL_VERSION == "winprob_evfilter_paper_v1_mapequiv_ask20_50_e05_gt900_mom100nonneg"
     assert ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE == "live_executable"
 
 
@@ -77,6 +100,57 @@ def test_win_prob_2c_edge_subtracts_ask_and_two_cent_cost():
 
     assert scored.loc[0, "fair_prob"] == 0.75
     assert scored.loc[0, "edge"] == pytest.approx(0.23)
+
+
+def test_active_strategy_filter_requires_game_time_900():
+    spec = ACTIVE_MARKET_ANCHOR_SPECS[0]
+    frame = pd.DataFrame(
+        {
+            "market_scope": ["map_winner_explicit", "map_winner_explicit"],
+            "book_best_ask": [0.40, 0.40],
+            "game_time_sec": [899, 900],
+            "side_mom_100": [0, 0],
+        }
+    )
+
+    mask = strategy_filter_mask(frame, spec)
+
+    assert mask.tolist() == [False, True]
+
+
+def test_active_strategy_filter_requires_nonnegative_mom100():
+    spec = ACTIVE_MARKET_ANCHOR_SPECS[0]
+    frame = pd.DataFrame(
+        {
+            "market_scope": ["map_winner_explicit", "map_winner_explicit", "map_winner_explicit"],
+            "book_best_ask": [0.40, 0.40, 0.40],
+            "game_time_sec": [900, 900, 900],
+            "side_mom_100": [-1, 0, 1],
+        }
+    )
+
+    mask = strategy_filter_mask(frame, spec)
+
+    assert mask.tolist() == [False, True, True]
+
+
+def test_gettoplive_rule_signals_fresh_kill_momentum_favorite():
+    first = _side_row(received_at_ns=100, game_time_sec=800, ask=0.60, radiant_score=10, dire_score=10)
+    second = _side_row(received_at_ns=200, game_time_sec=900, ask=0.60, radiant_score=12, dire_score=10)
+    bundle = PaperModelBundle(
+        models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
+        specs=PAPER_MODEL_SPECS,
+        training_cutoff="2026-06-24T00:00:00+00:00",
+    )
+
+    decisions = score_paper_decisions(pd.DataFrame([first, second]), bundle)
+    rule = decisions[decisions["model_name"] == "gettoplive_kill_mom_favorite_hold_rule"].sort_values("received_at_ns")
+
+    assert rule["signal"].tolist() == [False, True]
+    assert rule.iloc[1]["strategy_name"] == "paper_gettoplive_kill_mom_favorite_hold_v1"
+    assert rule.iloc[1]["candidate_group"] == "gettoplive_candidate"
+    assert rule.iloc[1]["edge"] == 1.0
+    assert rule.iloc[1]["side_kill_mom"] == pytest.approx(2.0)
 
 
 def test_default_paper_gate_requires_live_executable_snapshot():
@@ -299,9 +373,9 @@ def test_force_full_rescore_dedupes_against_all_existing_parts(tmp_path: Path, m
     first = run_paper_log(logs_root=tmp_path, force_full_rescore=True)
     second = run_paper_log(logs_root=tmp_path, force_full_rescore=True)
 
-    assert first["written_rows"] == len(PAPER_MODEL_SPECS)
+    assert first["written_rows"] == len(PAPER_DECISION_MODEL_SPECS)
     assert second["written_rows"] == 0
-    assert second["skipped_existing_rows"] == len(PAPER_MODEL_SPECS)
+    assert second["skipped_existing_rows"] == len(PAPER_DECISION_MODEL_SPECS)
 
 
 def test_save_and_load_paper_model_bundle_round_trips(tmp_path: Path):
@@ -342,7 +416,14 @@ def test_validate_paper_model_artifact_checks_manifest_contract(tmp_path: Path):
         validate_paper_model_artifact(artifact_dir=artifact_dir)
 
 
-def _side_row(received_at_ns: int = 1000) -> dict:
+def _side_row(
+    received_at_ns: int = 1000,
+    *,
+    game_time_sec: int = 900,
+    ask: float = 0.50,
+    radiant_score: int = 20,
+    dire_score: int = 15,
+) -> dict:
     row = {col: None for col in SIDE_SNAPSHOT_COLUMNS}
     row.update(
         {
@@ -355,11 +436,11 @@ def _side_row(received_at_ns: int = 1000) -> dict:
             "side": "YES",
             "received_at_utc": "2026-06-24T00:00:00+00:00",
             "received_at_ns": received_at_ns,
-            "game_time_sec": 900,
+            "game_time_sec": game_time_sec,
             "book_received_at_ns": 900,
             "book_age_ms": 1000.0,
             "book_best_bid": 0.49,
-            "book_best_ask": 0.50,
+            "book_best_ask": ask,
             "book_ask_size": 200.0,
             "book_spread": 0.01,
             "executable_snapshot": True,
@@ -367,8 +448,9 @@ def _side_row(received_at_ns: int = 1000) -> dict:
             "side_is_radiant": True,
             "radiant_lead": 5000,
             "net_worth_diff": 5000,
-            "radiant_score": 20,
-            "dire_score": 15,
+            "radiant_score": radiant_score,
+            "dire_score": dire_score,
+            "source_update_age_sec": 0.0,
             "building_state": None,
             "tower_state": None,
         }

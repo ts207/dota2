@@ -12,6 +12,7 @@ import duckdb
 import pandas as pd
 
 from .schemas import DECISION_COLUMNS
+from .strategy_contract import ACTIVE_SETTLED_PAPER_DECISIONS_NAME
 
 
 DEFAULT_DECISION_NAME = "strategy_decisions"
@@ -21,6 +22,7 @@ CANDIDATE_PRIORITY = {
     "primary": 0,
     "benchmark": 1,
     "full_state_benchmark": 1,
+    "gettoplive_candidate": 1,
     "control": 2,
 }
 
@@ -103,6 +105,23 @@ def run_report_decisions(
     if output_format == "json":
         return json.dumps(summary, indent=2, sort_keys=True)
     return _format_markdown(summary)
+
+
+def run_paper_validation_report(
+    *,
+    logs_root: Path = Path("logs"),
+    decisions_name: str = ACTIVE_SETTLED_PAPER_DECISIONS_NAME,
+    output_format: str = "markdown",
+    detail_limit: int = 10,
+) -> str:
+    """Summarize the forward paper ledger in validation-ready accounting views."""
+    decisions = _read_latest_or_dir(logs_root / decisions_name)
+    if decisions.empty and decisions_name == DEFAULT_SETTLED_DECISION_NAME:
+        decisions = _read_parquet_dir(logs_root / DEFAULT_DECISION_NAME)
+    summary = build_paper_validation_summary(decisions, detail_limit=detail_limit)
+    if output_format == "json":
+        return json.dumps(summary, indent=2, sort_keys=True)
+    return _format_paper_validation_markdown(summary)
 
 
 def run_settle_decisions_loop(
@@ -199,6 +218,77 @@ def summarize_decisions(decisions: pd.DataFrame) -> dict[str, Any]:
         },
         "models": sorted(rows, key=lambda row: (row["pnl_slip_1c"] is not None, row["pnl_slip_1c"] or 0), reverse=True),
         "signal_groups": sorted(group_rows, key=lambda row: row["trade_rows"], reverse=True),
+    }
+
+
+def build_paper_validation_summary(decisions: pd.DataFrame, *, detail_limit: int = 10) -> dict[str, Any]:
+    if decisions.empty:
+        return {
+            "rows": 0,
+            "signal_rows": 0,
+            "global_non_control": _trade_metrics(pd.DataFrame()),
+            "models": [],
+            "attribution": [],
+            "pending_global_trades": [],
+            "edge_buckets": [],
+            "match_concentration": [],
+            "market_bucket_concentration": [],
+        }
+    decisions = _add_signal_group_columns(decisions)
+    signal = decisions["signal"].fillna(False).astype(bool) if "signal" in decisions.columns else pd.Series(False, index=decisions.index)
+    model_trades = first_signal_trades(decisions)
+    global_trades = first_global_signal_trades(_exclude_control_decisions(decisions))
+    settled_global = _settled_trades(global_trades)
+    pending_global = _pending_trades(global_trades)
+
+    model_rows: list[dict[str, Any]] = []
+    if not model_trades.empty:
+        model_group_cols = [col for col in ["model_name", "candidate_group"] if col in model_trades.columns]
+        for keys, sub in model_trades.groupby(model_group_cols, dropna=False):
+            if not isinstance(keys, tuple):
+                keys = (keys,)
+            key_map = dict(zip(model_group_cols, keys, strict=False))
+            row = {
+                "model_name": str(key_map.get("model_name", "")),
+                "candidate_group": str(key_map.get("candidate_group", "")),
+            }
+            row.update(_trade_metrics(sub))
+            model_rows.append(row)
+
+    attribution_rows: list[dict[str, Any]] = []
+    if not global_trades.empty:
+        group_col = "exposure_signal_group" if "exposure_signal_group" in global_trades.columns else "signal_group"
+        for group, sub in global_trades.groupby(group_col, dropna=False):
+            row = {"exposure_signal_group": str(group)}
+            row.update(_trade_metrics(sub))
+            attribution_rows.append(row)
+
+    pending_rows = _limited_records(
+        pending_global,
+        [
+            "received_at_utc",
+            "model_name",
+            "candidate_group",
+            "match_id",
+            "current_game_number",
+            "side",
+            "ask",
+            "edge",
+            "exposure_signal_group",
+        ],
+        detail_limit,
+    )
+
+    return {
+        "rows": int(len(decisions)),
+        "signal_rows": int(signal.sum()),
+        "global_non_control": _trade_metrics(global_trades),
+        "models": sorted(model_rows, key=lambda row: (row["candidate_group"] != "primary", row["model_name"])),
+        "attribution": sorted(attribution_rows, key=lambda row: row["trade_rows"], reverse=True),
+        "pending_global_trades": pending_rows,
+        "edge_buckets": _bucket_metrics(settled_global, "edge", _edge_bucket_label),
+        "match_concentration": _concentration_rows(settled_global, "match_id", detail_limit),
+        "market_bucket_concentration": _concentration_rows(settled_global, "label_market_bucket", detail_limit),
     }
 
 
@@ -300,18 +390,31 @@ def _signal_group_label(groups: set[str]) -> str:
     has_primary = "primary" in groups
     has_benchmark = bool(groups.intersection({"benchmark", "full_state_benchmark"}))
     has_control = "control" in groups
+    has_gettoplive = "gettoplive_candidate" in groups
     if has_primary and has_benchmark and has_control:
         return "primary_benchmark_control"
     if has_primary and has_benchmark:
         return "primary_and_benchmark"
+    if has_primary and has_gettoplive and has_control:
+        return "primary_gettoplive_control"
+    if has_primary and has_gettoplive:
+        return "primary_and_gettoplive"
     if has_primary and has_control:
         return "primary_and_control"
     if has_primary:
         return "primary_only"
+    if has_benchmark and has_gettoplive and has_control:
+        return "benchmark_gettoplive_control"
+    if has_benchmark and has_gettoplive:
+        return "benchmark_and_gettoplive"
     if has_benchmark and has_control:
         return "benchmark_and_control"
     if has_benchmark:
         return "benchmark_only"
+    if has_gettoplive and has_control:
+        return "gettoplive_and_control"
+    if has_gettoplive:
+        return "gettoplive_only"
     if has_control:
         return "control_only"
     return "other_signal"
@@ -336,6 +439,13 @@ def add_report_decision_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--logs-root", default="logs")
     parser.add_argument("--decisions-name", default=DEFAULT_SETTLED_DECISION_NAME)
     parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
+
+
+def add_paper_validation_report_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--logs-root", default="logs")
+    parser.add_argument("--decisions-name", default=ACTIVE_SETTLED_PAPER_DECISIONS_NAME)
+    parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    parser.add_argument("--detail-limit", type=int, default=10)
 
 
 def _format_markdown(summary: dict[str, Any]) -> str:
@@ -401,6 +511,123 @@ def _format_markdown(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _format_paper_validation_markdown(summary: dict[str, Any]) -> str:
+    global_metrics = summary["global_non_control"]
+    lines = [
+        "# Paper Validation Report",
+        "",
+        f"- decision rows: {summary['rows']}",
+        f"- signal rows: {summary['signal_rows']}",
+        "",
+        "## Global Non-Control",
+        "",
+        "| trades | settled | pending | win | avg ask | pnl | pnl 1c | pnl 2c |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        _metrics_row(global_metrics),
+        "",
+        "## Models",
+        "",
+        "| model | group | trades | settled | pending | win | avg ask | pnl 2c |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in summary["models"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    row["model_name"],
+                    row["candidate_group"],
+                    str(row["trade_rows"]),
+                    str(row["settled_trade_rows"]),
+                    str(row["pending_trade_rows"]),
+                    _pct(row["win_rate"]),
+                    _num(row["avg_ask"]),
+                    _signed(row["pnl_slip_2c"]),
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Global Attribution",
+            "",
+            "| exposure group | trades | settled | pending | win | pnl 2c |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for row in summary["attribution"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    row["exposure_signal_group"],
+                    str(row["trade_rows"]),
+                    str(row["settled_trade_rows"]),
+                    str(row["pending_trade_rows"]),
+                    _pct(row["win_rate"]),
+                    _signed(row["pnl_slip_2c"]),
+                ]
+            )
+            + " |"
+        )
+    lines.extend(["", "## Edge Buckets", "", "| edge bucket | trades | win | avg ask | pnl 2c |", "| --- | ---: | ---: | ---: | ---: |"])
+    for row in summary["edge_buckets"]:
+        lines.append(
+            f"| {row['bucket']} | {row['settled_trade_rows']} | {_pct(row['win_rate'])} | {_num(row['avg_ask'])} | {_signed(row['pnl_slip_2c'])} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Match Concentration",
+            "",
+            "| match | settled trades | pnl 2c |",
+            "| --- | ---: | ---: |",
+        ]
+    )
+    for row in summary["match_concentration"]:
+        lines.append(f"| {row['key']} | {row['settled_trade_rows']} | {_signed(row['pnl_slip_2c'])} |")
+    lines.extend(
+        [
+            "",
+            "## Market Bucket Concentration",
+            "",
+            "| market bucket | settled trades | pnl 2c |",
+            "| --- | ---: | ---: |",
+        ]
+    )
+    for row in summary["market_bucket_concentration"]:
+        lines.append(f"| {row['key']} | {row['settled_trade_rows']} | {_signed(row['pnl_slip_2c'])} |")
+    lines.extend(
+        [
+            "",
+            "## Pending Global Trades",
+            "",
+            "| received | model | group | match | game | side | ask | edge | exposure group |",
+            "| --- | --- | --- | --- | ---: | --- | ---: | ---: | --- |",
+        ]
+    )
+    for row in summary["pending_global_trades"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    str(row.get("received_at_utc", "")),
+                    str(row.get("model_name", "")),
+                    str(row.get("candidate_group", "")),
+                    str(row.get("match_id", "")),
+                    str(row.get("current_game_number", "")),
+                    str(row.get("side", "")),
+                    _num(row.get("ask")),
+                    _num(row.get("edge")),
+                    str(row.get("exposure_signal_group", "")),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
 def _read_latest_or_dir(path: Path) -> pd.DataFrame:
     latest = path / "latest.parquet"
     if latest.exists():
@@ -434,6 +661,132 @@ def _sum_or_none(frame: pd.DataFrame, col: str) -> float | None:
     if values.empty:
         return None
     return float(values.sum())
+
+
+def _mean_or_none(frame: pd.DataFrame, col: str) -> float | None:
+    if frame.empty or col not in frame.columns:
+        return None
+    values = pd.to_numeric(frame[col], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return float(values.mean())
+
+
+def _settled_trades(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "settled_win" not in frame.columns:
+        return frame.iloc[0:0].copy()
+    return frame[frame["settled_win"].notna()].copy()
+
+
+def _pending_trades(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame.copy()
+    if "settled_win" not in frame.columns:
+        return frame.copy()
+    return frame[frame["settled_win"].isna()].copy()
+
+
+def _trade_metrics(frame: pd.DataFrame) -> dict[str, Any]:
+    settled = _settled_trades(frame)
+    wins = (
+        settled["settled_win"].map(_bool_or_none).fillna(False).astype(bool)
+        if not settled.empty and "settled_win" in settled.columns
+        else pd.Series(dtype=bool)
+    )
+    return {
+        "trade_rows": int(len(frame)),
+        "settled_trade_rows": int(len(settled)),
+        "pending_trade_rows": int(len(frame) - len(settled)),
+        "win_rate": float(wins.mean()) if len(settled) else None,
+        "avg_ask": _mean_or_none(settled, "ask"),
+        "paper_pnl": _sum_or_none(settled, "paper_pnl_per_share"),
+        "pnl_slip_1c": _sum_or_none(settled, "pnl_slip_1c"),
+        "pnl_slip_2c": _sum_or_none(settled, "pnl_slip_2c"),
+    }
+
+
+def _bucket_metrics(frame: pd.DataFrame, value_col: str, label_fn) -> list[dict[str, Any]]:
+    if frame.empty or value_col not in frame.columns:
+        return []
+    work = frame.copy()
+    values = pd.to_numeric(work[value_col], errors="coerce")
+    work = work[values.notna()].copy()
+    if work.empty:
+        return []
+    work["_bucket"] = values[values.notna()].map(label_fn)
+    rows: list[dict[str, Any]] = []
+    for bucket, sub in work.groupby("_bucket", sort=False, dropna=False):
+        row = {"bucket": str(bucket)}
+        row.update(_trade_metrics(sub))
+        rows.append(row)
+    return rows
+
+
+def _edge_bucket_label(value: float) -> str:
+    if value < 0.0:
+        return "<0.00"
+    if value < 0.05:
+        return "0.00-0.05"
+    if value < 0.10:
+        return "0.05-0.10"
+    if value < 0.15:
+        return "0.10-0.15"
+    if value < 0.20:
+        return "0.15-0.20"
+    return ">=0.20"
+
+
+def _concentration_rows(frame: pd.DataFrame, key_col: str, detail_limit: int) -> list[dict[str, Any]]:
+    if frame.empty or key_col not in frame.columns:
+        return []
+    rows: list[dict[str, Any]] = []
+    for key, sub in frame.groupby(key_col, dropna=False):
+        row = {"key": str(key)}
+        row.update(_trade_metrics(sub))
+        rows.append(row)
+    return sorted(
+        rows,
+        key=lambda row: (row["settled_trade_rows"], abs(row["pnl_slip_2c"] or 0.0)),
+        reverse=True,
+    )[: max(detail_limit, 0)]
+
+
+def _limited_records(frame: pd.DataFrame, cols: list[str], detail_limit: int) -> list[dict[str, Any]]:
+    if frame.empty:
+        return []
+    available = [col for col in cols if col in frame.columns]
+    work = frame[available].head(max(detail_limit, 0)).copy()
+    records: list[dict[str, Any]] = []
+    for raw in work.to_dict(orient="records"):
+        records.append({key: _json_value(value) for key, value in raw.items()})
+    return records
+
+
+def _json_value(value: Any) -> Any:
+    if value is None or pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def _metrics_row(metrics: dict[str, Any]) -> str:
+    return (
+        "| "
+        + " | ".join(
+            [
+                str(metrics.get("trade_rows", 0)),
+                str(metrics.get("settled_trade_rows", 0)),
+                str(metrics.get("pending_trade_rows", 0)),
+                _pct(metrics.get("win_rate")),
+                _num(metrics.get("avg_ask")),
+                _signed(metrics.get("paper_pnl")),
+                _signed(metrics.get("pnl_slip_1c")),
+                _signed(metrics.get("pnl_slip_2c")),
+            ]
+        )
+        + " |"
+    )
 
 
 def _bool_or_none(value: Any) -> bool | None:

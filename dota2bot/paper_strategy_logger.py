@@ -28,7 +28,9 @@ from .executable_value_model import SLIPPAGE_2C, train_winprob_logistic_evfilter
 from .strategy_contract import (
     ACTIVE_MARKET_ANCHOR_ELIGIBILITY_MODE,
     ACTIVE_MARKET_ANCHOR_MODEL_VERSION,
+    PAPER_DECISION_SPECS,
     PAPER_MARKET_ANCHOR_SPECS,
+    PAPER_RULE_SPECS,
     StrategySpec,
 )
 from .transition_features import add_transition_features
@@ -59,6 +61,8 @@ class PaperModelBundle:
 
 
 PAPER_MODEL_SPECS = list(PAPER_MARKET_ANCHOR_SPECS)
+PAPER_RULE_MODEL_SPECS = list(PAPER_RULE_SPECS)
+PAPER_DECISION_MODEL_SPECS = list(PAPER_DECISION_SPECS)
 
 
 def train_paper_model_bundle(
@@ -117,7 +121,7 @@ def save_paper_model_bundle(
             }
             for model_name, (_, features) in bundle.models.items()
         },
-        "specs": [asdict(spec) for spec in bundle.specs],
+        "specs": [_spec_manifest(spec) for spec in bundle.specs],
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     return {
@@ -171,12 +175,14 @@ def validate_paper_model_artifact(*, artifact_dir: Path = DEFAULT_MODEL_ARTIFACT
         raise ValueError(
             f"artifact manifest model_version={manifest.get('model_version')!r} does not match active {MODEL_VERSION!r}"
         )
-    expected_specs = json.loads(json.dumps([asdict(spec) for spec in PAPER_MODEL_SPECS]))
-    if manifest.get("specs") != expected_specs:
+    expected_specs = [_spec_manifest(spec) for spec in PAPER_MODEL_SPECS]
+    manifest_specs = [_normalize_spec_manifest(spec) for spec in manifest.get("specs", [])]
+    if manifest_specs != expected_specs:
         raise ValueError("artifact manifest specs do not match active PAPER_MODEL_SPECS")
 
     bundle = load_paper_model_bundle(artifact_dir=artifact_dir)
-    if bundle.specs != PAPER_MODEL_SPECS:
+    bundle_specs = [_spec_manifest(spec) for spec in bundle.specs]
+    if bundle_specs != expected_specs:
         raise ValueError("artifact bundle specs do not match active PAPER_MODEL_SPECS")
     missing_models = [spec.model_name for spec in PAPER_MODEL_SPECS if spec.model_name not in bundle.models]
     if missing_models:
@@ -193,6 +199,58 @@ def validate_paper_model_artifact(*, artifact_dir: Path = DEFAULT_MODEL_ARTIFACT
         "models": [spec.model_name for spec in PAPER_MODEL_SPECS],
         "valid": True,
     }
+
+
+def _spec_manifest(spec: PaperModelSpec) -> dict[str, Any]:
+    raw = {
+        "model_name": getattr(spec, "model_name", None),
+        "strategy_name": getattr(spec, "strategy_name", None),
+        "candidate_group": getattr(spec, "candidate_group", None),
+        "entry_threshold": getattr(spec, "entry_threshold", None),
+        "score_kind": getattr(spec, "score_kind", "win_prob"),
+        "market_scopes": getattr(spec, "market_scopes", ()),
+        "min_ask": getattr(spec, "min_ask", None),
+        "max_ask": getattr(spec, "max_ask", None),
+        "min_game_time_sec": getattr(spec, "min_game_time_sec", None),
+        "min_side_mom_100": getattr(spec, "min_side_mom_100", None),
+        "min_side_kill_mom": getattr(spec, "min_side_kill_mom", None),
+        "max_source_update_age_sec": getattr(spec, "max_source_update_age_sec", None),
+        "deterministic_rule": getattr(spec, "deterministic_rule", False),
+    }
+    return _normalize_spec_manifest(raw)
+
+
+def _normalize_spec_manifest(spec: dict[str, Any]) -> dict[str, Any]:
+    defaults = {
+        "score_kind": "win_prob",
+        "market_scopes": (),
+        "min_ask": None,
+        "max_ask": None,
+        "min_game_time_sec": None,
+        "min_side_mom_100": None,
+        "min_side_kill_mom": None,
+        "max_source_update_age_sec": None,
+        "deterministic_rule": False,
+    }
+    normalized = {**defaults, **spec}
+    if isinstance(normalized.get("market_scopes"), list):
+        normalized["market_scopes"] = tuple(normalized["market_scopes"])
+    keys = [
+        "model_name",
+        "strategy_name",
+        "candidate_group",
+        "entry_threshold",
+        "score_kind",
+        "market_scopes",
+        "min_ask",
+        "max_ask",
+        "min_game_time_sec",
+        "min_side_mom_100",
+        "min_side_kill_mom",
+        "max_source_update_age_sec",
+        "deterministic_rule",
+    ]
+    return {key: normalized.get(key) for key in keys}
 
 
 def score_paper_decisions(
@@ -220,6 +278,13 @@ def score_paper_decisions(
         scored["reason"] = scored.apply(lambda row: _decision_reason(row, spec.entry_threshold), axis=1)
         for row in scored.to_dict(orient="records"):
             decisions.append(_decision_row(row, spec, bundle))
+    for spec in PAPER_RULE_MODEL_SPECS:
+        scored = add_rule_scores(featured.copy(), spec)
+        scored["strategy_filter"] = strategy_filter_mask(scored, spec)
+        scored["signal"] = scored["tradable_paper"] & scored["strategy_filter"] & (scored["edge"] >= spec.entry_threshold)
+        scored["reason"] = scored.apply(lambda row: _decision_reason(row, spec.entry_threshold), axis=1)
+        for row in scored.to_dict(orient="records"):
+            decisions.append(_decision_row(row, spec, bundle))
 
     out = pd.DataFrame(decisions, columns=DECISION_COLUMNS)
     if out.empty:
@@ -228,6 +293,16 @@ def score_paper_decisions(
     out["exposure_signal_group"] = _signal_groups(out, exposure_level=True)
     out["signal_group"] = out["exposure_signal_group"]
     return out[DECISION_COLUMNS]
+
+
+def add_rule_scores(frame: pd.DataFrame, spec: PaperModelSpec) -> pd.DataFrame:
+    if spec.score_kind != "rule_binary":
+        raise ValueError(f"unknown deterministic rule score_kind={spec.score_kind!r}")
+    scored = frame.copy()
+    rule_mask = strategy_filter_mask(scored, spec)
+    scored["fair_prob"] = np.nan
+    scored["edge"] = np.where(rule_mask, 1.0, 0.0)
+    return scored
 
 
 def add_model_scores(frame: pd.DataFrame, model: Any, features: list[str], *, score_kind: str) -> pd.DataFrame:
@@ -263,6 +338,7 @@ def prepare_paper_feature_frame(
         "book_ask_size",
         "book_age_ms",
         "game_time_sec",
+        "source_update_age_sec",
     ]:
         if col in featured.columns:
             featured[col] = pd.to_numeric(featured[col], errors="coerce")
@@ -290,6 +366,26 @@ def strategy_filter_mask(frame: pd.DataFrame, spec: PaperModelSpec) -> pd.Series
         mask &= ask >= spec.min_ask
     if spec.max_ask is not None:
         mask &= ask <= spec.max_ask
+    if spec.min_game_time_sec is not None:
+        if "game_time_sec" not in frame.columns:
+            return pd.Series(False, index=frame.index)
+        game_time = pd.to_numeric(frame["game_time_sec"], errors="coerce")
+        mask &= game_time >= spec.min_game_time_sec
+    if spec.min_side_mom_100 is not None:
+        if "side_mom_100" not in frame.columns:
+            return pd.Series(False, index=frame.index)
+        side_mom_100 = pd.to_numeric(frame["side_mom_100"], errors="coerce")
+        mask &= side_mom_100 >= spec.min_side_mom_100
+    if spec.min_side_kill_mom is not None:
+        if "side_kill_mom" not in frame.columns:
+            return pd.Series(False, index=frame.index)
+        side_kill_mom = pd.to_numeric(frame["side_kill_mom"], errors="coerce")
+        mask &= side_kill_mom >= spec.min_side_kill_mom
+    if spec.max_source_update_age_sec is not None:
+        if "source_update_age_sec" not in frame.columns:
+            return pd.Series(False, index=frame.index)
+        source_age = pd.to_numeric(frame["source_update_age_sec"], errors="coerce")
+        mask &= source_age <= spec.max_source_update_age_sec
     return mask.fillna(False).astype(bool)
 
 
@@ -366,7 +462,7 @@ def run_paper_log(
         "skipped_existing_rows": int(before - len(decisions)),
         "output_name": output_name,
         "output_path": str(out_path) if out_path else None,
-        "models": [spec.model_name for spec in PAPER_MODEL_SPECS],
+        "models": [spec.model_name for spec in PAPER_DECISION_MODEL_SPECS],
         "min_received_at_ns": min_received_at_ns,
         "max_received_at_ns": max_ns,
         "eligibility_mode": eligibility_mode,
@@ -523,7 +619,7 @@ def _signal_groups(decisions: pd.DataFrame, *, exposure_level: bool) -> pd.Serie
         key_cols = ["match_id", "map_exposure_id"]
     else:
         key_cols = ["match_id", "canonical_exposure_id", "received_at_ns", "side"]
-    specs_by_model = {spec.model_name: spec for spec in PAPER_MODEL_SPECS}
+    specs_by_model = {spec.model_name: spec for spec in PAPER_DECISION_MODEL_SPECS}
     model_names = list(specs_by_model)
     signal_map = (
         decisions.pivot_table(
@@ -550,15 +646,28 @@ def _signal_groups(decisions: pd.DataFrame, *, exposure_level: bool) -> pd.Serie
         group_set = set(signaled)
         has_primary = "primary" in group_set
         has_benchmark = bool(group_set.intersection({"benchmark", "full_state_benchmark"}))
+        has_gettoplive = "gettoplive_candidate" in group_set
         has_control = "control" in group_set
         if has_primary and has_benchmark and has_control:
             return "primary_benchmark_control"
         if has_primary and has_benchmark:
             return "primary_and_benchmark"
+        if has_primary and has_gettoplive and has_control:
+            return "primary_gettoplive_control"
+        if has_primary and has_gettoplive:
+            return "primary_and_gettoplive"
+        if has_benchmark and has_gettoplive and has_control:
+            return "benchmark_gettoplive_control"
+        if has_benchmark and has_gettoplive:
+            return "benchmark_and_gettoplive"
         if has_primary and has_control:
             return "primary_and_control"
         if has_primary:
             return "primary_only"
+        if has_gettoplive and has_control:
+            return "gettoplive_and_control"
+        if has_gettoplive:
+            return "gettoplive_only"
         if has_benchmark and has_control:
             return "benchmark_and_control"
         if has_benchmark:
