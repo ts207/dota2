@@ -8,6 +8,7 @@ def mock_positions():
         {
             "position_id": "1",
             "candidate_group": "primary",
+            "strategy_name": "strat_1",
             "match_id": "match_1",
             "map_exposure_id": "m1",
             "entry_received_at_ns": 1000,
@@ -23,6 +24,7 @@ def mock_positions():
         {
             "position_id": "2",
             "candidate_group": "gettoplive_candidate",
+            "strategy_name": "strat_2",
             "match_id": "match_1",
             "map_exposure_id": "m1",
             "entry_received_at_ns": 2000,
@@ -38,6 +40,7 @@ def mock_positions():
         {
             "position_id": "3",
             "candidate_group": "primary",
+            "strategy_name": "strat_1",
             "match_id": "match_1",
             "map_exposure_id": "m1",
             "entry_received_at_ns": 3000,
@@ -53,6 +56,7 @@ def mock_positions():
         {
             "position_id": "4",
             "candidate_group": "benchmark",
+            "strategy_name": "strat_3",
             "match_id": "match_2",
             "map_exposure_id": "m2",
             "entry_received_at_ns": 4000,
@@ -68,6 +72,7 @@ def mock_positions():
         {
             "position_id": "5",
             "candidate_group": "control",
+            "strategy_name": "strat_4",
             "match_id": "match_3",
             "map_exposure_id": "m3",
             "entry_received_at_ns": 5000,
@@ -83,6 +88,7 @@ def mock_positions():
         {
             "position_id": "6",
             "candidate_group": "primary",
+            "strategy_name": "strat_1",
             "match_id": "match_4",
             "map_exposure_id": "m4",
             "entry_received_at_ns": 6000,
@@ -116,7 +122,7 @@ def test_sizing_logic(monkeypatch, capsys):
     
     f1 = r_map["flat_1"]
     f5 = r_map["flat_5"]
-    f25 = r_map["flat_25_liq_capped"]
+    f25 = r_map["flat_25_liquidity_unchecked"]
     es = r_map["edge_scaled_0.5pct_bankroll_cap25"]
     k5 = r_map["kelly_05_cap25"]
     

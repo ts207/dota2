@@ -78,6 +78,12 @@ def run_sizing_report(
     if "book_ask_size" not in allowed.columns:
         allowed["book_ask_size"] = np.nan
 
+    if "source_update_age_sec" not in allowed.columns:
+        if "book_age_ms" in allowed.columns:
+            allowed["source_update_age_sec"] = pd.to_numeric(allowed["book_age_ms"], errors="coerce") / 1000.0
+        else:
+            allowed["source_update_age_sec"] = np.nan
+
     # Calculate liquidity cap
     allowed["book_ask_size"] = pd.to_numeric(allowed["book_ask_size"], errors="coerce")
     allowed["liquidity_unknown"] = allowed["book_ask_size"].isna()
@@ -95,10 +101,12 @@ def run_sizing_report(
     schemes = [
         "flat_1",
         "flat_5",
-        "flat_25_liq_capped",
+        "flat_25_liquidity_unchecked",
         "edge_scaled_0.5pct_bankroll_cap25",
+        "kill_mom_scaled_0.5pct_cap25",
         "kelly_05_cap25",
         "kelly_10_cap25",
+        "group_specific_default"
     ]
 
     results = []
@@ -122,23 +130,54 @@ def run_sizing_report(
                 desired_shares = 1.0
             elif scheme == "flat_5":
                 desired_shares = 5.0
-            elif scheme == "flat_25_liq_capped":
+            elif scheme == "flat_25_liquidity_unchecked":
                 desired_shares = min(25.0, liq_cap)
             elif scheme == "edge_scaled_0.5pct_bankroll_cap25":
                 base_notional = bankroll * 0.005
-                multiplier = _clamp(edge / 0.10, 0.25, 2.0)
+                multiplier = _clamp(edge / 0.10, 0.25, 2.0) if not pd.isna(edge) else 0.25
                 target_notional = base_notional * multiplier
+                desired_shares = target_notional / entry_ask
+            elif scheme == "kill_mom_scaled_0.5pct_cap25":
+                side_kill_mom = float(row.get("side_kill_mom", 0.0))
+                source_age = float(row.get("source_update_age_sec", 0.0))
+                if pd.isna(side_kill_mom): side_kill_mom = 0.0
+                if pd.isna(source_age): source_age = 5.0
+
+                base_notional = bankroll * 0.005
+                kill_multiplier = _clamp(side_kill_mom / 3.0, 0.5, 2.0)
+                age_multiplier = _clamp((5.0 - source_age) / 5.0, 0.25, 1.0)
+                target_notional = base_notional * kill_multiplier * age_multiplier
                 desired_shares = target_notional / entry_ask
             elif scheme == "kelly_05_cap25":
                 effective_price = entry_ask + 0.02
-                kelly_fraction = max(0.0, (fair_prob - effective_price) / (1 - effective_price) if effective_price < 1 else 0.0)
+                kelly_fraction = max(0.0, (fair_prob - effective_price) / (1 - effective_price) if effective_price < 1 and not pd.isna(fair_prob) else 0.0)
                 target_notional = bankroll * 0.05 * kelly_fraction
                 desired_shares = target_notional / entry_ask
             elif scheme == "kelly_10_cap25":
                 effective_price = entry_ask + 0.02
-                kelly_fraction = max(0.0, (fair_prob - effective_price) / (1 - effective_price) if effective_price < 1 else 0.0)
+                kelly_fraction = max(0.0, (fair_prob - effective_price) / (1 - effective_price) if effective_price < 1 and not pd.isna(fair_prob) else 0.0)
                 target_notional = bankroll * 0.10 * kelly_fraction
                 desired_shares = target_notional / entry_ask
+            elif scheme == "group_specific_default":
+                group = row.get("candidate_group")
+                if group == "primary":
+                    base_notional = bankroll * 0.005
+                    multiplier = _clamp(edge / 0.10, 0.25, 2.0) if not pd.isna(edge) else 0.25
+                    target_notional = base_notional * multiplier
+                    desired_shares = target_notional / entry_ask
+                elif group == "gettoplive_candidate":
+                    side_kill_mom = float(row.get("side_kill_mom", 0.0))
+                    source_age = float(row.get("source_update_age_sec", 0.0))
+                    if pd.isna(side_kill_mom): side_kill_mom = 0.0
+                    if pd.isna(source_age): source_age = 5.0
+
+                    base_notional = bankroll * 0.005
+                    kill_multiplier = _clamp(side_kill_mom / 3.0, 0.5, 2.0)
+                    age_multiplier = _clamp((5.0 - source_age) / 5.0, 0.25, 1.0)
+                    target_notional = base_notional * kill_multiplier * age_multiplier
+                    desired_shares = target_notional / entry_ask
+                else:
+                    desired_shares = 1.0 # fallback
             else:
                 desired_shares = 0.0
 
@@ -255,9 +294,41 @@ def run_sizing_report(
                 "pnl 2c": f"{row['pnl_2c']:.2f}",
                 "ROI": f"{(row['pnl_2c']/row['stake'])*100:.2f}%" if row['stake'] > 0 else "0.0%"
             })
+            
+        # Add combined if there's more than 1 group
+        if len(cg) > 1:
+            cg_rows.append({
+                "sizing": r["sizing"],
+                "group": "active_combined",
+                "positions": cg["positions"].sum(),
+                "stake": f"{cg['stake'].sum():.1f}",
+                "pnl 2c": f"{cg['pnl_2c'].sum():.2f}",
+                "ROI": f"{(cg['pnl_2c'].sum()/cg['stake'].sum())*100:.2f}%" if cg['stake'].sum() > 0 else "0.0%"
+            })
     _print_table(pd.DataFrame(cg_rows))
+
+    print("## By Strategy\n")
+    strat_rows = []
+    for r in results:
+        sdf = r["settled_df"]
+        if sdf.empty: continue
+        st = sdf.groupby("strategy_name").agg(
+            positions=("position_id", "count"),
+            stake=("sim_stake", "sum"),
+            pnl_2c=("sim_pnl_2c", "sum")
+        ).reset_index()
+        for _, row in st.iterrows():
+            strat_rows.append({
+                "sizing": r["sizing"],
+                "strategy": row["strategy_name"],
+                "positions": row["positions"],
+                "stake": f"{row['stake']:.1f}",
+                "pnl 2c": f"{row['pnl_2c']:.2f}",
+                "ROI": f"{(row['pnl_2c']/row['stake'])*100:.2f}%" if row['stake'] > 0 else "0.0%"
+            })
+    _print_table(pd.DataFrame(strat_rows))
     
-    print("## Map Concentration (Worst Maps by PnL)\n")
+    print("## Map Concentration\n")
     map_rows = []
     for r in results:
         sdf = r["settled_df"]
@@ -267,17 +338,45 @@ def run_sizing_report(
             stake=("sim_stake", "sum"),
             pnl_2c=("sim_pnl_2c", "sum")
         ).reset_index()
-        mc = mc.sort_values("pnl_2c").head(2) # Top 2 worst maps
-        for _, row in mc.iterrows():
-            map_rows.append({
-                "sizing": r["sizing"],
-                "match": row["match_id"],
-                "positions": row["positions"],
-                "stake": f"{row['stake']:.1f}",
-                "pnl 2c": f"{row['pnl_2c']:.2f}"
-            })
+        
+        total_stake = mc["stake"].sum()
+        total_pnl = mc["pnl_2c"].sum()
+        
+        largest_stake = mc["stake"].max()
+        largest_pnl = mc["pnl_2c"].max()
+        largest_loss = mc["pnl_2c"].min()
+        
+        top3_pnl_maps = mc.sort_values("pnl_2c", ascending=False).head(3)
+        top3_stake_maps = mc.sort_values("stake", ascending=False).head(3)
+        
+        top3_pnl_pct = top3_pnl_maps["pnl_2c"].sum() / total_pnl if total_pnl != 0 else 0.0
+        top3_stake_pct = top3_stake_maps["stake"].sum() / total_stake if total_stake != 0 else 0.0
+        
+        map_rows.append({
+            "sizing": r["sizing"],
+            "largest map stake": f"{largest_stake:.1f}",
+            "largest map PnL": f"{largest_pnl:.2f}",
+            "largest map loss": f"{largest_loss:.2f}",
+            "top 3 maps as % of PnL": f"{top3_pnl_pct*100:.1f}%",
+            "top 3 maps as % of stake": f"{top3_stake_pct*100:.1f}%"
+        })
     _print_table(pd.DataFrame(map_rows))
     
+    print("## Input Completeness\n")
+    print(f"- fair_prob present: {allowed['fair_prob'].notna().mean()*100:.1f}%")
+    print(f"- edge present: {allowed['edge'].notna().mean()*100:.1f}%")
+    print(f"- book_ask_size present: {(~allowed['liquidity_unknown']).mean()*100:.1f}%")
+    if "source_update_age_sec" in allowed.columns:
+        print(f"- source_update_age_sec present: {allowed['source_update_age_sec'].notna().mean()*100:.1f}%")
+    if "side_kill_mom" in allowed.columns:
+        print(f"- side_kill_mom present: {allowed['side_kill_mom'].notna().mean()*100:.1f}%")
+    print()
+
+    print("## Per-Strategy Suggested Default\n")
+    print("- primary recommended sizing: edge_scaled")
+    print("- gettoplive recommended sizing: flat_1 or kill_mom_scaled")
+    print("- combined active recommended sizing: group_specific_default\n")
+
     print("## Liquidity Summary\n")
     liq_rows = []
     for r in results:

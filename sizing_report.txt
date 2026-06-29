@@ -6,12 +6,14 @@ Source: active (bankroll=$1000.0, max_shares=25.0, map_cap=$200.0)
 
 | sizing | positions | settled | win | avg ask | avg edge | avg shares | total stake | pnl 2c | ROI | max DD | worst position |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| flat_1 | 40 | 40 | 67.5% | 0.568 | 0.00% | 1.0 | 22.7 | 3.46 | 15.22% | 1.51 | -0.78 |
-| flat_5 | 40 | 40 | 67.5% | 0.568 | 0.00% | 5.0 | 113.7 | 17.30 | 15.22% | 7.55 | -3.90 |
-| flat_25_liq_capped | 40 | 40 | 67.5% | 0.568 | 0.00% | 25.0 | 568.5 | 86.52 | 15.22% | 37.75 | -19.50 |
-| edge_scaled_0.5pct_bankroll_cap25 | 40 | 40 | 67.5% | 0.568 | 0.00% | 2.3 | 50.0 | 9.46 | 18.93% | 2.96 | -1.31 |
-| kelly_05_cap25 | 40 | 40 | 67.5% | 0.568 | 0.00% | 0.0 | 0.0 | 0.00 | 0.00% | 0.00 | 0.00 |
-| kelly_10_cap25 | 40 | 40 | 67.5% | 0.568 | 0.00% | 0.0 | 0.0 | 0.00 | 0.00% | 0.00 | 0.00 |
+| flat_1 | 40 | 40 | 67.5% | 0.568 | 79.08% | 1.0 | 22.7 | 3.46 | 15.22% | 1.51 | -0.78 |
+| flat_5 | 40 | 40 | 67.5% | 0.568 | 79.08% | 5.0 | 113.7 | 17.30 | 15.22% | 7.55 | -3.90 |
+| flat_25_liquidity_unchecked | 40 | 40 | 67.5% | 0.568 | 79.08% | 25.0 | 568.5 | 86.52 | 15.22% | 37.75 | -19.50 |
+| edge_scaled_0.5pct_bankroll_cap25 | 40 | 40 | 67.5% | 0.568 | 79.08% | 16.2 | 361.7 | 85.47 | 23.63% | 21.47 | -10.47 |
+| kill_mom_scaled_0.5pct_cap25 | 40 | 40 | 67.5% | 0.568 | 79.08% | 6.0 | 133.8 | 32.63 | 24.38% | 7.77 | -7.09 |
+| kelly_05_cap25 | 40 | 40 | 67.5% | 0.568 | 79.08% | 4.7 | 81.8 | 20.21 | 24.72% | 18.22 | -13.00 |
+| kelly_10_cap25 | 40 | 40 | 67.5% | 0.568 | 79.08% | 6.1 | 105.4 | 14.72 | 13.96% | 23.44 | -13.00 |
+| group_specific_default | 40 | 40 | 67.5% | 0.568 | 79.08% | 8.1 | 167.9 | 57.13 | 34.03% | 15.19 | -10.47 |
 
 ## Candidate Group Breakdown
 
@@ -19,56 +21,97 @@ Source: active (bankroll=$1000.0, max_shares=25.0, map_cap=$200.0)
 | --- | --- | --- | --- | --- | --- |
 | flat_1 | gettoplive_candidate | 30 | 18.4 | 3.02 | 16.44% |
 | flat_1 | primary | 10 | 4.4 | 0.44 | 10.09% |
+| flat_1 | active_combined | 40 | 22.7 | 3.46 | 15.22% |
 | flat_5 | gettoplive_candidate | 30 | 91.9 | 15.10 | 16.44% |
 | flat_5 | primary | 10 | 21.8 | 2.20 | 10.09% |
-| flat_25_liq_capped | gettoplive_candidate | 30 | 459.5 | 75.52 | 16.44% |
-| flat_25_liq_capped | primary | 10 | 109.0 | 11.00 | 10.09% |
-| edge_scaled_0.5pct_bankroll_cap25 | gettoplive_candidate | 30 | 37.5 | 7.59 | 20.25% |
-| edge_scaled_0.5pct_bankroll_cap25 | primary | 10 | 12.5 | 1.87 | 14.97% |
+| flat_5 | active_combined | 40 | 113.7 | 17.30 | 15.22% |
+| flat_25_liquidity_unchecked | gettoplive_candidate | 30 | 459.5 | 75.52 | 16.44% |
+| flat_25_liquidity_unchecked | primary | 10 | 109.0 | 11.00 | 10.09% |
+| flat_25_liquidity_unchecked | active_combined | 40 | 568.5 | 86.52 | 15.22% |
+| edge_scaled_0.5pct_bankroll_cap25 | gettoplive_candidate | 30 | 300.0 | 60.74 | 20.25% |
+| edge_scaled_0.5pct_bankroll_cap25 | primary | 10 | 61.7 | 24.73 | 40.07% |
+| edge_scaled_0.5pct_bankroll_cap25 | active_combined | 40 | 361.7 | 85.47 | 23.63% |
+| kill_mom_scaled_0.5pct_cap25 | gettoplive_candidate | 30 | 106.2 | 32.40 | 30.52% |
+| kill_mom_scaled_0.5pct_cap25 | primary | 10 | 27.7 | 0.22 | 0.81% |
+| kill_mom_scaled_0.5pct_cap25 | active_combined | 40 | 133.8 | 32.63 | 24.38% |
 | kelly_05_cap25 | gettoplive_candidate | 30 | 0.0 | 0.00 | 0.0% |
-| kelly_05_cap25 | primary | 10 | 0.0 | 0.00 | 0.0% |
+| kelly_05_cap25 | primary | 10 | 81.8 | 20.21 | 24.72% |
+| kelly_05_cap25 | active_combined | 40 | 81.8 | 20.21 | 24.72% |
 | kelly_10_cap25 | gettoplive_candidate | 30 | 0.0 | 0.00 | 0.0% |
-| kelly_10_cap25 | primary | 10 | 0.0 | 0.00 | 0.0% |
+| kelly_10_cap25 | primary | 10 | 105.4 | 14.72 | 13.96% |
+| kelly_10_cap25 | active_combined | 40 | 105.4 | 14.72 | 13.96% |
+| group_specific_default | gettoplive_candidate | 30 | 106.2 | 32.40 | 30.52% |
+| group_specific_default | primary | 10 | 61.7 | 24.73 | 40.07% |
+| group_specific_default | active_combined | 40 | 167.9 | 57.13 | 34.03% |
 
-## Map Concentration (Worst Maps by PnL)
+## By Strategy
 
-| sizing | match | positions | stake | pnl 2c |
-| --- | --- | --- | --- | --- |
-| flat_1 | 8862890705 | 2 | 1.2 | -1.21 |
-| flat_1 | 8865950637 | 2 | 1.2 | -1.20 |
-| flat_5 | 8862890705 | 2 | 5.8 | -6.05 |
-| flat_5 | 8865950637 | 2 | 5.8 | -6.00 |
-| flat_25_liq_capped | 8862890705 | 2 | 29.2 | -30.25 |
-| flat_25_liq_capped | 8865950637 | 2 | 29.0 | -30.00 |
-| edge_scaled_0.5pct_bankroll_cap25 | 8865950637 | 2 | 2.5 | -2.60 |
-| edge_scaled_0.5pct_bankroll_cap25 | 8862890705 | 2 | 2.5 | -2.59 |
-| kelly_05_cap25 | 8862890705 | 2 | 0.0 | 0.00 |
-| kelly_05_cap25 | 8862933625 | 1 | 0.0 | 0.00 |
-| kelly_10_cap25 | 8862890705 | 2 | 0.0 | 0.00 |
-| kelly_10_cap25 | 8862933625 | 1 | 0.0 | 0.00 |
+| sizing | strategy | positions | stake | pnl 2c | ROI |
+| --- | --- | --- | --- | --- | --- |
+| flat_1 | paper_gettoplive_kill_mom_favorite_hold_v1 | 30 | 18.4 | 3.02 | 16.44% |
+| flat_1 | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 10 | 4.4 | 0.44 | 10.09% |
+| flat_5 | paper_gettoplive_kill_mom_favorite_hold_v1 | 30 | 91.9 | 15.10 | 16.44% |
+| flat_5 | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 10 | 21.8 | 2.20 | 10.09% |
+| flat_25_liquidity_unchecked | paper_gettoplive_kill_mom_favorite_hold_v1 | 30 | 459.5 | 75.52 | 16.44% |
+| flat_25_liquidity_unchecked | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 10 | 109.0 | 11.00 | 10.09% |
+| edge_scaled_0.5pct_bankroll_cap25 | paper_gettoplive_kill_mom_favorite_hold_v1 | 30 | 300.0 | 60.74 | 20.25% |
+| edge_scaled_0.5pct_bankroll_cap25 | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 10 | 61.7 | 24.73 | 40.07% |
+| kill_mom_scaled_0.5pct_cap25 | paper_gettoplive_kill_mom_favorite_hold_v1 | 30 | 106.2 | 32.40 | 30.52% |
+| kill_mom_scaled_0.5pct_cap25 | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 10 | 27.7 | 0.22 | 0.81% |
+| kelly_05_cap25 | paper_gettoplive_kill_mom_favorite_hold_v1 | 30 | 0.0 | 0.00 | 0.0% |
+| kelly_05_cap25 | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 10 | 81.8 | 20.21 | 24.72% |
+| kelly_10_cap25 | paper_gettoplive_kill_mom_favorite_hold_v1 | 30 | 0.0 | 0.00 | 0.0% |
+| kelly_10_cap25 | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 10 | 105.4 | 14.72 | 13.96% |
+| group_specific_default | paper_gettoplive_kill_mom_favorite_hold_v1 | 30 | 106.2 | 32.40 | 30.52% |
+| group_specific_default | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 10 | 61.7 | 24.73 | 40.07% |
+
+## Map Concentration
+
+| sizing | largest map stake | largest map PnL | largest map loss | top 3 maps as % of PnL | top 3 maps as % of stake |
+| --- | --- | --- | --- | --- | --- |
+| flat_1 | 1.2 | 1.04 | -1.21 | 88.7% | 15.7% |
+| flat_5 | 6.2 | 5.20 | -6.05 | 88.7% | 15.7% |
+| flat_25_liquidity_unchecked | 31.0 | 26.00 | -30.25 | 88.7% | 15.7% |
+| edge_scaled_0.5pct_bankroll_cap25 | 20.0 | 23.00 | -18.03 | 69.6% | 16.6% |
+| kill_mom_scaled_0.5pct_cap25 | 8.9 | 7.99 | -9.15 | 70.4% | 19.5% |
+| kelly_05_cap25 | 12.5 | 15.50 | -13.00 | 216.4% | 41.6% |
+| kelly_10_cap25 | 12.5 | 15.50 | -13.00 | 297.2% | 33.7% |
+| group_specific_default | 14.2 | 16.99 | -9.79 | 74.4% | 23.2% |
+
+## Input Completeness
+
+- fair_prob present: 25.0%
+- edge present: 100.0%
+- book_ask_size present: 100.0%
+- source_update_age_sec present: 100.0%
+- side_kill_mom present: 100.0%
+
+## Per-Strategy Suggested Default
+
+- primary recommended sizing: edge_scaled
+- gettoplive recommended sizing: flat_1 or kill_mom_scaled
+- combined active recommended sizing: group_specific_default
 
 ## Liquidity Summary
 
 | sizing | liquidity capped | liquidity unknown |
 | --- | --- | --- |
-| flat_1 | 0.0% | 100.0% |
-| flat_5 | 0.0% | 100.0% |
-| flat_25_liq_capped | 0.0% | 100.0% |
-| edge_scaled_0.5pct_bankroll_cap25 | 0.0% | 100.0% |
-| kelly_05_cap25 | 0.0% | 100.0% |
-| kelly_10_cap25 | 0.0% | 100.0% |
+| flat_1 | 0.0% | 0.0% |
+| flat_5 | 0.0% | 0.0% |
+| flat_25_liquidity_unchecked | 0.0% | 0.0% |
+| edge_scaled_0.5pct_bankroll_cap25 | 0.0% | 0.0% |
+| kill_mom_scaled_0.5pct_cap25 | 0.0% | 0.0% |
+| kelly_05_cap25 | 2.5% | 0.0% |
+| kelly_10_cap25 | 2.5% | 0.0% |
+| group_specific_default | 0.0% | 0.0% |
 
 ## Warnings
 
-- [flat_1] liquidity unknown on >30% positions (100.0%)
 - [flat_1] less than 50 settled positions (40)
-- [flat_5] liquidity unknown on >30% positions (100.0%)
 - [flat_5] less than 50 settled positions (40)
-- [flat_25_liq_capped] liquidity unknown on >30% positions (100.0%)
-- [flat_25_liq_capped] less than 50 settled positions (40)
-- [edge_scaled_0.5pct_bankroll_cap25] liquidity unknown on >30% positions (100.0%)
+- [flat_25_liquidity_unchecked] less than 50 settled positions (40)
 - [edge_scaled_0.5pct_bankroll_cap25] less than 50 settled positions (40)
-- [kelly_05_cap25] liquidity unknown on >30% positions (100.0%)
+- [kill_mom_scaled_0.5pct_cap25] less than 50 settled positions (40)
 - [kelly_05_cap25] less than 50 settled positions (40)
-- [kelly_10_cap25] liquidity unknown on >30% positions (100.0%)
 - [kelly_10_cap25] less than 50 settled positions (40)
+- [group_specific_default] less than 50 settled positions (40)
