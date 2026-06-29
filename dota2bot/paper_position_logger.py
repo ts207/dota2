@@ -23,6 +23,7 @@ POSITION_COLUMNS = [
     "token_id",
     "side",
     "entry_received_at_ns",
+    "entry_received_at_utc",
     "entry_ask",
     "shares",
     "notional",
@@ -31,6 +32,17 @@ POSITION_COLUMNS = [
     "settled_win",
     "pnl_per_share_2c",
     "position_pnl_2c",
+    "edge",
+    "fair_prob",
+    "market_prob",
+    "entry_threshold",
+    "book_ask_size",
+    "book_spread",
+    "book_age_ms",
+    "game_time_sec",
+    "side_mom_100",
+    "side_mom_300",
+    "side_kill_mom",
 ]
 
 def run_paper_positions(

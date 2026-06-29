@@ -59,6 +59,7 @@ from .paper_exit_logger import (
 from .paper_position_logger import add_paper_position_args, run_paper_positions, run_paper_positions_loop
 from .exposure_report import add_exposure_report_args, run_exposure_report
 from .position_report import add_position_report_args, run_position_report
+from .paper_sizing_report import add_sizing_report_args, run_sizing_report
 from .replay_bot import run_replay
 from .runtime_supervisor import add_runtime_args, format_runtime_result, run_runtime_command
 from .settle_live import add_settle_args, run_settle_live, run_settle_live_loop
@@ -135,6 +136,9 @@ def main() -> None:
 
     position_report = sub.add_parser("position-report", help="summarize position ledger")
     add_position_report_args(position_report)
+
+    sizing_report = sub.add_parser("paper-sizing-report", help="simulate position sizing overlays")
+    add_sizing_report_args(sizing_report)
 
     backtest_active = sub.add_parser("backtest-active-strategy", help="simple historical backtest for the single active strategy")
     add_backtest_active_strategy_args(backtest_active)
@@ -364,6 +368,17 @@ def main() -> None:
         run_position_report(
             logs_root=Path(args.logs_root),
             input_name=args.input_name,
+        )
+    elif args.command == "paper-sizing-report":
+        run_sizing_report(
+            logs_root=Path(args.logs_root),
+            input_name=args.input_name,
+            source=args.source,
+            bankroll=args.bankroll,
+            max_shares=args.max_shares,
+            max_position_notional=args.max_position_notional,
+            max_map_notional=args.max_map_notional,
+            output_format=args.format,
         )
     elif args.command == "backtest-active-strategy":
         thresholds = parse_thresholds(args.thresholds)

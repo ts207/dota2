@@ -115,6 +115,7 @@ class ExposureManager:
             "token_id": row.get("token_id"),
             "side": row.get("side"),
             "entry_received_at_ns": row.get("received_at_ns"),
+            "entry_received_at_utc": row.get("received_at_utc"),
             "entry_ask": ask,
             "shares": shares,
             "notional": notional,
@@ -123,6 +124,17 @@ class ExposureManager:
             "settled_win": row.get("settled_win"),
             "pnl_per_share_2c": pnl_per_share_2c,
             "position_pnl_2c": position_pnl_2c,
+            "edge": row.get("edge"),
+            "fair_prob": row.get("fair_prob"),
+            "market_prob": row.get("market_prob"),
+            "entry_threshold": row.get("entry_threshold"),
+            "book_ask_size": row.get("book_ask_size"),
+            "book_spread": row.get("book_spread"),
+            "book_age_ms": row.get("book_age_ms"),
+            "game_time_sec": row.get("game_time_sec"),
+            "side_mom_100": row.get("side_mom_100"),
+            "side_mom_300": row.get("side_mom_300"),
+            "side_kill_mom": row.get("side_kill_mom"),
         }
         
         if not limit:
