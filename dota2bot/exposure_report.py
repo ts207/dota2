@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 
-from .exposure_manager import ExposureManager, ExposureLimit, DEFAULT_LIMITS
+from .exposure_manager import ExposureManager, DEFAULT_LIMITS
 from .paper_strategy_logger import _read_parquet_dir
-
+from .strategy_contract import ACTIVE_SETTLED_PAPER_DECISIONS_NAME
 
 def _print_table(df: pd.DataFrame) -> None:
     if df.empty:
@@ -22,7 +21,7 @@ def _print_table(df: pd.DataFrame) -> None:
     print()
 
 
-def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = "paper_validation_settled_decisions_winprob_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg") -> None:
+def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = ACTIVE_SETTLED_PAPER_DECISIONS_NAME) -> None:
     input_dir = logs_root / input_name
     if not input_dir.exists():
         print(f"Directory {input_dir} not found.")
@@ -35,17 +34,17 @@ def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = "pa
 
     print("# Exposure Report\n")
 
-    # Only look at signals
     signals = frame[frame["signal"].fillna(False).astype(bool)].copy()
     if signals.empty:
         print("No signals found.")
         return
         
     print(f"- raw signal rows: {len(signals)}")
-    unique_maps = signals["canonical_exposure_id"].nunique()
+    
+    signals["map_exposure_id"] = signals.apply(lambda row: f"{row.get('match_id', '')}::{row.get('current_game_number', 1)}", axis=1)
+    unique_maps = signals["map_exposure_id"].nunique()
     print(f"- unique map exposures: {unique_maps}")
     
-    # Run default limits
     manager = ExposureManager()
     positions = manager.process_decisions(signals)
     
@@ -56,7 +55,7 @@ def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = "pa
     print(f"- blocked repeated signals: {len(blocked)}")
     
     if not blocked.empty:
-        max_repeats = blocked.groupby("canonical_exposure_id").size().max()
+        max_repeats = blocked.groupby("map_exposure_id").size().max()
         print(f"- max repeated signals per map: {max_repeats}")
     else:
         print("- max repeated signals per map: 0")
@@ -67,7 +66,6 @@ def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = "pa
     cap_results = []
     
     for cap in caps:
-        # Create a modified limit dict
         mod_limits = {}
         for k, v in DEFAULT_LIMITS.items():
             if cap == 9999:
@@ -79,9 +77,8 @@ def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = "pa
         pos = mgr.process_decisions(signals)
         pos_allowed = pos[pos["blocked_reason"].isna()]
         
-        # Calculate PnL for allowed positions that are settled
         settled = pos_allowed[pos_allowed["settled_win"].notna()]
-        pnl = settled["pnl_2c"].sum() if not settled.empty else 0.0
+        pnl = settled["position_pnl_2c"].sum() if not settled.empty else 0.0
         
         cap_label = str(cap) if cap != 9999 else "machine-gun"
         cap_results.append({
@@ -96,18 +93,17 @@ def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = "pa
     
     print("## Map Exposure Extremes (Machine-Gun)\n")
     
-    # Use the 9999 cap to see the worst/best map exposures
     mgr_mg = ExposureManager(limits={k: replace(v, max_entries_per_map=9999, max_total_shares_per_map=9999.0, max_total_notional_per_map=99999.0, min_seconds_between_entries=0) for k, v in DEFAULT_LIMITS.items()})
     pos_mg = mgr_mg.process_decisions(signals)
     pos_mg_allowed = pos_mg[pos_mg["blocked_reason"].isna()]
     pos_mg_settled = pos_mg_allowed[pos_mg_allowed["settled_win"].notna()]
     
     if not pos_mg_settled.empty:
-        map_pnl = pos_mg_settled.groupby(["canonical_exposure_id", "strategy_name"])["pnl_2c"].sum().reset_index()
-        map_pnl = map_pnl.sort_values("pnl_2c")
+        map_pnl = pos_mg_settled.groupby(["map_exposure_id", "strategy_name"])["position_pnl_2c"].sum().reset_index()
+        map_pnl = map_pnl.sort_values("position_pnl_2c")
         
         worst = map_pnl.head(3)
-        best = map_pnl.tail(3).sort_values("pnl_2c", ascending=False)
+        best = map_pnl.tail(3).sort_values("position_pnl_2c", ascending=False)
         
         print("### Largest Losing Exposures\n")
         _print_table(worst)
@@ -118,7 +114,7 @@ def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = "pa
 
 def add_exposure_report_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--logs-root", type=Path, default=Path("logs"))
-    parser.add_argument("--input-name", type=str, default="paper_validation_settled_decisions_winprob_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg")
+    parser.add_argument("--input-name", type=str, default=ACTIVE_SETTLED_PAPER_DECISIONS_NAME)
 
 
 def main() -> None:

@@ -1,0 +1,36 @@
+# Exposure Report
+
+- raw signal rows: 1559
+- unique map exposures: 33
+- allowed positions: 68
+- blocked repeated signals: 1491
+- max repeated signals per map: 138
+
+## PnL under different Caps
+
+| cap | allowed_positions | settled | pnl_2c |
+| --- | --- | --- | --- |
+| 1 | 101 | 101 | +6.3910 |
+| 2 | 161 | 161 | +14.4500 |
+| 3 | 187 | 187 | +17.6320 |
+| 5 | 208 | 208 | +15.3720 |
+| machine-gun | 1421 | 1421 | +125.9170 |
+
+## Map Exposure Extremes (Machine-Gun)
+
+### Largest Losing Exposures
+
+| map_exposure_id | strategy_name | position_pnl_2c |
+| --- | --- | --- |
+| 8862890705::1 | paper_gettoplive_kill_mom_favorite_hold_v1 | -26.290000000000003 |
+| 8868891396::1 | paper_gettoplive_kill_mom_favorite_hold_v1 | -18.36 |
+| 8863187227::3 | paper_market_gettoplive_mapequiv_ask20_50 | -17.55 |
+
+### Largest Winning Exposures
+
+| map_exposure_id | strategy_name | position_pnl_2c |
+| --- | --- | --- |
+| 8868891396::1 | paper_market_gettoplive_mapequiv_ask20_50 | 32.059999999999995 |
+| 8865634649::1 | paper_market_gettoplive_mapequiv_ask20_50 | 26.33 |
+| 8865634649::1 | paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg | 16.9 |
+

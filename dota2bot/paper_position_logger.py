@@ -1,20 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from .exposure_manager import ExposureManager
-from .paper_strategy_logger import (
-    DEFAULT_INPUT_NAME,
-    DEFAULT_MODEL_ARTIFACT_DIR,
-    _read_parquet_dir,
-)
-from .run_loop import run_supervisor
-from .utils.duckdb_utils import ParquetAppendLog
+from .logging_store import ParquetAppendLog
+from .paper_strategy_logger import _read_parquet_dir
+from .strategy_contract import ACTIVE_PAPER_DECISIONS_NAME
 
 POSITION_COLUMNS = [
     "position_id",
@@ -24,7 +19,7 @@ POSITION_COLUMNS = [
     "candidate_group",
     "match_id",
     "current_game_number",
-    "canonical_exposure_id",
+    "map_exposure_id",
     "token_id",
     "side",
     "entry_received_at_ns",
@@ -34,30 +29,40 @@ POSITION_COLUMNS = [
     "exposure_count_for_map",
     "blocked_reason",
     "settled_win",
-    "pnl_2c",
+    "pnl_per_share_2c",
+    "position_pnl_2c",
 ]
 
 def run_paper_positions(
     *,
     logs_root: Path = Path("logs"),
-    input_name: str = "paper_validation_decisions",
+    input_name: str = ACTIVE_PAPER_DECISIONS_NAME,
     output_name: str = "paper_positions",
     batch_rows: int = 5000,
-    limit: int | None = None,
-    min_received_at_ns: int | None = None,
+    mode: str = "rebuild",
 ) -> dict[str, Any]:
-    # Determine the actual input directory by finding the latest decisions hash
-    # Or expect the caller to provide the exact input_name
     input_dir = logs_root / input_name
+    output_dir = logs_root / output_name
     
-    # Read the decision ledger
-    # Note: For stateful exposure manager, we really should read from the beginning
-    # to maintain proper map_exposure counts, or at least read the last 24h.
-    # For now, we read what is requested.
-    frame = _read_parquet_dir(input_dir, min_received_at_ns=min_received_at_ns)
-    if limit is not None:
-        frame = frame.tail(limit).copy()
+    manager = ExposureManager()
+    
+    if mode == "append" and output_dir.exists():
+        existing_pos = _read_parquet_dir(output_dir)
+        manager.load_state(existing_pos)
+        min_ns = None
+        if not existing_pos.empty and "entry_received_at_ns" in existing_pos.columns:
+            max_ns = existing_pos["entry_received_at_ns"].dropna().max()
+            if pd.notna(max_ns):
+                min_ns = int(max_ns)
         
+        frame = _read_parquet_dir(input_dir, min_received_at_ns=min_ns)
+    else:
+        if mode == "rebuild" and output_dir.exists():
+            import shutil
+            shutil.rmtree(output_dir)
+        frame = _read_parquet_dir(input_dir)
+        existing_pos = pd.DataFrame(columns=POSITION_COLUMNS)
+
     if frame.empty:
         return {
             "input_rows": 0,
@@ -66,7 +71,6 @@ def run_paper_positions(
             "blocked_positions": 0,
         }
         
-    manager = ExposureManager()
     positions = manager.process_decisions(frame)
     
     if positions.empty:
@@ -77,14 +81,18 @@ def run_paper_positions(
             "blocked_positions": 0,
         }
         
-    # We always rewrite or append?
-    # Since state depends on history, rebuilding the positions ledger from scratch is safest
-    # when rules change. But for live running, appending is better.
-    # We'll just use ParquetAppendLog
+    if mode == "append" and not existing_pos.empty:
+        positions = positions[~positions["position_id"].isin(existing_pos["position_id"])].copy()
+        
+    if positions.empty:
+        return {
+            "input_rows": len(frame),
+            "position_rows": 0,
+            "allowed_positions": 0,
+            "blocked_positions": 0,
+        }
+
     log = ParquetAppendLog(logs_root, output_name, POSITION_COLUMNS, batch_rows=batch_rows)
-    # We should deduplicate against existing position_ids or decision_ids if appending.
-    # For simplicity in this script, we'll assume we process and append.
-    
     log.extend(positions.to_dict(orient="records"))
     log.flush()
     
@@ -99,8 +107,9 @@ def run_paper_positions(
 
 def add_paper_position_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--logs-root", type=Path, default=Path("logs"))
-    parser.add_argument("--input-name", type=str, default="paper_validation_decisions")
+    parser.add_argument("--input-name", type=str, default=ACTIVE_PAPER_DECISIONS_NAME)
     parser.add_argument("--output-name", type=str, default="paper_positions")
+    parser.add_argument("--mode", type=str, choices=["rebuild", "append"], default="rebuild")
     
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -111,6 +120,7 @@ def main() -> None:
         logs_root=args.logs_root,
         input_name=args.input_name,
         output_name=args.output_name,
+        mode=args.mode,
     )
     for k, v in res.items():
         print(f"{k}: {v}")
