@@ -56,8 +56,9 @@ from .paper_exit_logger import (
     run_paper_exit_log_loop,
     run_paper_exit_report,
 )
-from .paper_position_logger import add_paper_position_args, run_paper_positions
+from .paper_position_logger import add_paper_position_args, run_paper_positions, run_paper_positions_loop
 from .exposure_report import add_exposure_report_args, run_exposure_report
+from .position_report import add_position_report_args, run_position_report
 from .replay_bot import run_replay
 from .runtime_supervisor import add_runtime_args, format_runtime_result, run_runtime_command
 from .settle_live import add_settle_args, run_settle_live, run_settle_live_loop
@@ -131,6 +132,9 @@ def main() -> None:
 
     exposure_report = sub.add_parser("exposure-report", help="summarize exposure under different limits")
     add_exposure_report_args(exposure_report)
+
+    position_report = sub.add_parser("position-report", help="summarize position ledger")
+    add_position_report_args(position_report)
 
     backtest_active = sub.add_parser("backtest-active-strategy", help="simple historical backtest for the single active strategy")
     add_backtest_active_strategy_args(backtest_active)
@@ -330,6 +334,15 @@ def main() -> None:
             )
         )
     elif args.command == "paper-position-log":
+        if args.loop:
+            run_paper_positions_loop(
+                logs_root=Path(args.logs_root),
+                input_name=args.input_name,
+                output_name=args.output_name,
+                mode=args.mode,
+                interval_sec=args.interval_sec,
+            )
+            return
         print(
             json.dumps(
                 run_paper_positions(
@@ -344,6 +357,11 @@ def main() -> None:
         )
     elif args.command == "exposure-report":
         run_exposure_report(
+            logs_root=Path(args.logs_root),
+            input_name=args.input_name,
+        )
+    elif args.command == "position-report":
+        run_position_report(
             logs_root=Path(args.logs_root),
             input_name=args.input_name,
         )

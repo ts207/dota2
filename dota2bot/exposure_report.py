@@ -68,7 +68,9 @@ def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = ACT
     for cap in caps:
         mod_limits = {}
         for k, v in DEFAULT_LIMITS.items():
-            if cap == 9999:
+            if v.max_entries_per_map == 0:
+                mod_limits[k] = v
+            elif cap == 9999:
                 mod_limits[k] = replace(v, max_entries_per_map=9999, max_total_shares_per_map=9999.0, max_total_notional_per_map=99999.0, min_seconds_between_entries=0)
             else:
                 mod_limits[k] = replace(v, max_entries_per_map=cap, max_total_shares_per_map=float(cap))

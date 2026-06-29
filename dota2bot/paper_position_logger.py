@@ -9,7 +9,7 @@ import pandas as pd
 from .exposure_manager import ExposureManager
 from .logging_store import ParquetAppendLog
 from .paper_strategy_logger import _read_parquet_dir
-from .strategy_contract import ACTIVE_PAPER_DECISIONS_NAME
+from .strategy_contract import ACTIVE_PAPER_DECISIONS_NAME, ACTIVE_SETTLED_PAPER_DECISIONS_NAME
 
 POSITION_COLUMNS = [
     "position_id",
@@ -36,7 +36,7 @@ POSITION_COLUMNS = [
 def run_paper_positions(
     *,
     logs_root: Path = Path("logs"),
-    input_name: str = ACTIVE_PAPER_DECISIONS_NAME,
+    input_name: str = ACTIVE_SETTLED_PAPER_DECISIONS_NAME,
     output_name: str = "paper_positions",
     batch_rows: int = 5000,
     mode: str = "rebuild",
@@ -105,11 +105,37 @@ def run_paper_positions(
         "blocked_positions": len(positions) - allowed,
     }
 
+def run_paper_positions_loop(
+    *,
+    logs_root: Path = Path("logs"),
+    input_name: str = ACTIVE_SETTLED_PAPER_DECISIONS_NAME,
+    output_name: str = "paper_positions",
+    batch_rows: int = 5000,
+    mode: str = "rebuild",
+    interval_sec: float = 300.0,
+) -> None:
+    import time
+    while True:
+        try:
+            res = run_paper_positions(
+                logs_root=logs_root,
+                input_name=input_name,
+                output_name=output_name,
+                batch_rows=batch_rows,
+                mode=mode,
+            )
+            print(res, flush=True)
+        except Exception as e:
+            print(f"Error in paper_positions_loop: {e}", flush=True)
+        time.sleep(interval_sec)
+
 def add_paper_position_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--logs-root", type=Path, default=Path("logs"))
-    parser.add_argument("--input-name", type=str, default=ACTIVE_PAPER_DECISIONS_NAME)
+    parser.add_argument("--input-name", type=str, default=ACTIVE_SETTLED_PAPER_DECISIONS_NAME)
     parser.add_argument("--output-name", type=str, default="paper_positions")
     parser.add_argument("--mode", type=str, choices=["rebuild", "append"], default="rebuild")
+    parser.add_argument("--loop", action="store_true")
+    parser.add_argument("--interval-sec", type=float, default=300.0)
     
 def main() -> None:
     parser = argparse.ArgumentParser()

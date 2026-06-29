@@ -22,7 +22,7 @@ from .strategy_contract import (
 )
 
 
-DEFAULT_INPUT_NAME = ACTIVE_SETTLED_PAPER_DECISIONS_NAME
+DEFAULT_INPUT_NAME = "paper_positions"
 DEFAULT_SIDE_NAME = "live_settled_side_snapshots"
 DEFAULT_OUTPUT_NAME = "paper_exit_decisions_late_mom100_neg_bid70"
 DEFAULT_EXIT_STRATEGY_NAME = "late_mom100_neg_bid70"
@@ -288,16 +288,26 @@ def format_exit_report(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _active_primary_entries(decisions: pd.DataFrame) -> pd.DataFrame:
-    if decisions.empty:
-        return decisions.iloc[0:0].copy()
-    signal = decisions["signal"].fillna(False).astype(bool)
-    model = decisions["model_name"].astype("string").isin(ACTIVE_MARKET_ANCHOR_MODEL_NAMES)
-    group = decisions["candidate_group"].astype("string").str.lower().eq("primary")
-    work = decisions[signal & model & group].copy()
+def _active_primary_entries(positions: pd.DataFrame) -> pd.DataFrame:
+    if positions.empty:
+        return positions.iloc[0:0].copy()
+    allowed = positions["blocked_reason"].isna()
+    model = positions["model_name"].astype("string").isin(ACTIVE_MARKET_ANCHOR_MODEL_NAMES)
+    group = positions["candidate_group"].astype("string").str.lower().eq("primary")
+    work = positions[allowed & model & group].copy()
     if work.empty:
         return work
-    work = _add_map_exposure_id(work)
+    
+    # Rename columns so that down-stream logic matches
+    work = work.rename(columns={
+        "entry_received_at_ns": "received_at_ns",
+        "entry_ask": "ask",
+        "pnl_per_share_2c": "pnl_slip_2c",
+    })
+    
+    if "map_exposure_id" not in work.columns:
+        work = _add_map_exposure_id(work)
+    
     return work.sort_values(["map_exposure_id", "received_at_ns"]).drop_duplicates(["map_exposure_id"], keep="first").reset_index(drop=True)
 
 
