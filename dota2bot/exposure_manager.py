@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -18,8 +18,28 @@ class ExposureLimit:
     max_total_shares_per_map: float = 3.0
     max_total_notional_per_map: float = 100.0
     allow_add_to_winner: bool = False
-    block_opposite_side: bool = True
-    exposure_limit_version: str = "v1"
+    block_opposite_side_strategy: bool = True
+    block_opposite_side_portfolio: bool = True
+    exposure_limit_version: str = "v2"
+
+def canonical_game_number(val: Any) -> str:
+    if pd.isna(val) or val == "":
+        return "MAPEQUIV"
+    try:
+        f = float(val)
+        if f.is_integer():
+            return str(int(f))
+        return str(f)
+    except (ValueError, TypeError):
+        s = str(val).strip()
+        if not s or s == "nan":
+            return "MAPEQUIV"
+        return s
+
+def canonical_map_exposure_id(row: Mapping[str, Any]) -> str:
+    match = str(row.get("match_id", ""))
+    game = canonical_game_number(row.get("current_game_number"))
+    return f"{match}::{game}"
 
 def _generate_default_limits() -> dict[str, ExposureLimit]:
     limits = {}
@@ -29,6 +49,10 @@ def _generate_default_limits() -> dict[str, ExposureLimit]:
         if group == "control":
             # No execution for control group
             limits[strat] = ExposureLimit(strategy_name=strat, max_entries_per_map=0)
+        elif group in ("primary", "gettoplive_candidate"):
+            limits[strat] = ExposureLimit(strategy_name=strat, max_entries_per_map=1, block_opposite_side_portfolio=True)
+        elif group == "benchmark":
+            limits[strat] = ExposureLimit(strategy_name=strat, max_entries_per_map=1, block_opposite_side_portfolio=False)
         else:
             limits[strat] = ExposureLimit(strategy_name=strat, max_entries_per_map=1)
     return limits
@@ -83,9 +107,7 @@ class ExposureManager:
         strategy = row.get("strategy_name", "")
         limit = self.limits.get(strategy)
         
-        match = str(row.get("match_id", ""))
-        game = str(row.get("current_game_number", 1))
-        map_id = f"{match}::{game}"
+        map_id = canonical_map_exposure_id(row)
             
         existing = self.positions_by_map.get(map_id, [])
         strat_existing = [p for p in existing if p["strategy_name"] == strategy]
@@ -151,10 +173,19 @@ class ExposureManager:
             pos["position_pnl_2c"] = 0.0
             return pos
 
-        if limit.block_opposite_side:
+        if limit.block_opposite_side_strategy:
             for p in strat_existing:
                 if p["side"] != pos["side"]:
-                    pos["blocked_reason"] = "opposite_side_already_held"
+                    pos["blocked_reason"] = "opposite_side_already_held_strategy"
+                    pos["shares"] = 0.0
+                    pos["notional"] = 0.0
+                    pos["position_pnl_2c"] = 0.0
+                    return pos
+
+        if limit.block_opposite_side_portfolio:
+            for p in existing:
+                if not p.get("blocked_reason") and p["side"] != pos["side"]:
+                    pos["blocked_reason"] = "opposite_side_already_held_portfolio"
                     pos["shares"] = 0.0
                     pos["notional"] = 0.0
                     pos["position_pnl_2c"] = 0.0

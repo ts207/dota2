@@ -154,14 +154,23 @@ def main() -> None:
     add_paper_position_args(parser)
     args = parser.parse_args()
     
-    res = run_paper_positions(
-        logs_root=args.logs_root,
-        input_name=args.input_name,
-        output_name=args.output_name,
-        mode=args.mode,
-    )
-    for k, v in res.items():
-        print(f"{k}: {v}")
+    if args.loop:
+        run_paper_positions_loop(
+            logs_root=args.logs_root,
+            input_name=args.input_name,
+            output_name=args.output_name,
+            mode=args.mode,
+            interval_sec=args.interval_sec,
+        )
+    else:
+        res = run_paper_positions(
+            logs_root=args.logs_root,
+            input_name=args.input_name,
+            output_name=args.output_name,
+            mode=args.mode,
+        )
+        for k, v in res.items():
+            print(f"{k}: {v}")
 
 if __name__ == "__main__":
     main()

@@ -43,8 +43,9 @@ def run_paper_exit_log(
     min_exit_bid: float = DEFAULT_MIN_EXIT_BID,
     require_mom300_negative: bool = False,
     batch_rows: int = 5000,
+    source: str = "primary",
 ) -> dict[str, Any]:
-    entries = _active_primary_entries(_read_latest_or_dir(logs_root / input_name))
+    entries = _filter_entries(_read_latest_or_dir(logs_root / input_name), source)
     sides = _read_latest_or_dir(logs_root / side_name)
     exits = build_exit_decisions(
         entries=entries,
@@ -80,6 +81,7 @@ def run_paper_exit_log_loop(
     side_name: str = DEFAULT_SIDE_NAME,
     output_name: str = DEFAULT_OUTPUT_NAME,
     interval_sec: float = 300.0,
+    source: str = "primary",
 ) -> None:
     while True:
         result = run_paper_exit_log(
@@ -87,6 +89,7 @@ def run_paper_exit_log_loop(
             input_name=input_name,
             side_name=side_name,
             output_name=output_name,
+            source=source,
         )
         print(result, flush=True)
         time.sleep(interval_sec)
@@ -123,15 +126,16 @@ def run_paper_exit_report(
     logs_root: Path = Path("logs"),
     exit_name: str = DEFAULT_OUTPUT_NAME,
     output_format: str = "markdown",
+    source: str = "primary",
 ) -> str:
     exits = _read_latest_or_dir(logs_root / exit_name)
-    summary = summarize_exit_decisions(exits)
+    summary = summarize_exit_decisions(exits, source=source)
     if output_format == "json":
         return json.dumps(summary, indent=2, sort_keys=True)
     return format_exit_report(summary)
 
 
-def summarize_exit_decisions(exits: pd.DataFrame) -> dict[str, Any]:
+def summarize_exit_decisions(exits: pd.DataFrame, source: str = "primary") -> dict[str, Any]:
     if exits.empty:
         return {
             "rows": 0,
@@ -158,7 +162,8 @@ def summarize_exit_decisions(exits: pd.DataFrame) -> dict[str, Any]:
     settled_win = exits["settled_win"].map(_bool_or_none)
     exit_rows = exits[signal].copy()
     return {
-        "rows": int(len(exits)),
+        "source_name": source,
+        "rows": len(exits),
         "exit_signal_rows": int(signal.sum()),
         "settled_rows": int(settled_win.notna().sum()),
         "pending_rows": int(settled_win.isna().sum()),
@@ -202,9 +207,11 @@ def summarize_exit_decisions(exits: pd.DataFrame) -> dict[str, Any]:
 
 
 def format_exit_report(summary: dict[str, Any]) -> str:
+    source_name = summary.get('source_name', 'primary')
     lines = [
         "# Paper Exit Report",
         "",
+        f"- source: {source_name} controlled positions",
         f"- active entries: {summary['rows']}",
         f"- exit signals: {summary['exit_signal_rows']}",
         f"- pending rows: {summary.get('pending_rows', 0)}",
@@ -288,13 +295,24 @@ def format_exit_report(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _active_primary_entries(positions: pd.DataFrame) -> pd.DataFrame:
+def _filter_entries(positions: pd.DataFrame, source: str) -> pd.DataFrame:
     if positions.empty:
         return positions.iloc[0:0].copy()
     allowed = positions["blocked_reason"].isna()
     model = positions["model_name"].astype("string").isin(ACTIVE_MARKET_ANCHOR_MODEL_NAMES)
-    group = positions["candidate_group"].astype("string").str.lower().eq("primary")
-    work = positions[allowed & model & group].copy()
+    
+    if source == "primary":
+        group = positions["candidate_group"].astype("string").str.lower().eq("primary")
+        work = positions[allowed & model & group].copy()
+    elif source == "gettoplive":
+        group = positions["candidate_group"].astype("string").str.lower().eq("gettoplive_candidate")
+        work = positions[allowed & group].copy()
+    elif source == "active":
+        group = positions["candidate_group"].astype("string").str.lower().isin(["primary", "gettoplive_candidate"])
+        work = positions[allowed & group].copy()
+    else:
+        work = positions[allowed].copy()
+
     if work.empty:
         return work
     
@@ -645,6 +663,7 @@ def add_paper_exit_log_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--input-name", default=DEFAULT_INPUT_NAME)
     parser.add_argument("--side-name", default=DEFAULT_SIDE_NAME)
     parser.add_argument("--output-name", default=DEFAULT_OUTPUT_NAME)
+    parser.add_argument("--source", choices=["primary", "gettoplive", "active"], default="primary")
     parser.add_argument("--batch-rows", type=int, default=5000)
     parser.add_argument("--loop", action="store_true")
     parser.add_argument("--interval-sec", type=float, default=300.0)
@@ -653,4 +672,5 @@ def add_paper_exit_log_args(parser: argparse.ArgumentParser) -> None:
 def add_paper_exit_report_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--logs-root", default="logs")
     parser.add_argument("--exit-name", default=DEFAULT_OUTPUT_NAME)
+    parser.add_argument("--source", choices=["primary", "gettoplive", "active"], default="primary")
     parser.add_argument("--format", choices=["markdown", "json"], default="markdown")

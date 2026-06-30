@@ -60,6 +60,7 @@ from .paper_position_logger import add_paper_position_args, run_paper_positions,
 from .exposure_report import add_exposure_report_args, run_exposure_report
 from .position_report import add_position_report_args, run_position_report
 from .paper_sizing_report import add_sizing_report_args, run_sizing_report
+from .statistical_report import add_statistical_report_args, run_statistical_report
 from .replay_bot import run_replay
 from .runtime_supervisor import add_runtime_args, format_runtime_result, run_runtime_command
 from .settle_live import add_settle_args, run_settle_live, run_settle_live_loop
@@ -139,6 +140,14 @@ def main() -> None:
 
     sizing_report = sub.add_parser("paper-sizing-report", help="simulate position sizing overlays")
     add_sizing_report_args(sizing_report)
+
+    statistical_report = sub.add_parser("statistical-report", help="advanced statistical metrics with bootstrapping")
+    from dota2bot.statistical_report import add_statistical_report_args, run_statistical_report
+    add_statistical_report_args(statistical_report)
+
+    reversal_report = sub.add_parser("reversal-research-report", help="research-only price reversal analysis")
+    reversal_report.add_argument("--logs-root", type=Path, default=Path("logs"))
+    reversal_report.add_argument("--format", type=str, default="markdown")
 
     backtest_active = sub.add_parser("backtest-active-strategy", help="simple historical backtest for the single active strategy")
     add_backtest_active_strategy_args(backtest_active)
@@ -314,6 +323,7 @@ def main() -> None:
                 side_name=args.side_name,
                 output_name=args.output_name,
                 interval_sec=args.interval_sec,
+                source=args.source,
             )
             return
         print(
@@ -324,6 +334,7 @@ def main() -> None:
                     side_name=args.side_name,
                     output_name=args.output_name,
                     batch_rows=args.batch_rows,
+                    source=args.source,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -335,6 +346,7 @@ def main() -> None:
                 logs_root=Path(args.logs_root),
                 exit_name=args.exit_name,
                 output_format=args.format,
+                source=args.source,
             )
         )
     elif args.command == "paper-position-log":
@@ -370,15 +382,34 @@ def main() -> None:
             input_name=args.input_name,
         )
     elif args.command == "paper-sizing-report":
+        from dota2bot.paper_sizing_report import run_sizing_report
+
         run_sizing_report(
             logs_root=Path(args.logs_root),
             input_name=args.input_name,
             source=args.source,
             bankroll=args.bankroll,
             max_shares=args.max_shares,
-            max_position_notional=args.max_position_notional,
             max_map_notional=args.max_map_notional,
+            max_position_notional=args.max_position_notional,
             output_format=args.format,
+        )
+    elif args.command == "statistical-report":
+        from dota2bot.statistical_report import run_statistical_report
+        run_statistical_report(
+            logs_root=Path(args.logs_root),
+            input_name=args.input_name,
+            source=args.source,
+            sizing=args.sizing,
+            bootstrap_samples=args.bootstrap_samples,
+            output_format=args.format,
+        )
+    elif args.command == "reversal-research-report":
+        from dota2bot.reversal_research_report import run_reversal_report
+        
+        run_reversal_report(
+            logs_root=Path(args.logs_root),
+            format_type=args.format,
         )
     elif args.command == "backtest-active-strategy":
         thresholds = parse_thresholds(args.thresholds)

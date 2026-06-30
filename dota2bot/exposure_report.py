@@ -41,7 +41,8 @@ def run_exposure_report(*, logs_root: Path = Path("logs"), input_name: str = ACT
         
     print(f"- raw signal rows: {len(signals)}")
     
-    signals["map_exposure_id"] = signals.apply(lambda row: f"{row.get('match_id', '')}::{row.get('current_game_number', 1)}", axis=1)
+    from .exposure_manager import canonical_map_exposure_id
+    signals["map_exposure_id"] = signals.apply(canonical_map_exposure_id, axis=1)
     unique_maps = signals["map_exposure_id"].nunique()
     print(f"- unique map exposures: {unique_maps}")
     

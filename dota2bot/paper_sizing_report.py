@@ -225,12 +225,24 @@ def run_sizing_report(
             max_dd = settled["drawdown"].max()
             
             worst_position = settled["sim_pnl_2c"].min()
+            
+            # Group specific edge metrics
+            primary_settled = settled[settled["candidate_group"] == "primary"]
+            gtl_settled = settled[settled["candidate_group"] == "gettoplive_candidate"]
+            
+            avg_model_edge = primary_settled["edge"].mean() if not primary_settled.empty and "edge" in primary_settled.columns else np.nan
+            avg_kill_mom = gtl_settled["side_kill_mom"].mean() if not gtl_settled.empty and "side_kill_mom" in gtl_settled.columns else np.nan
+            avg_source_age = (gtl_settled["book_age_ms"].mean() / 1000.0) if not gtl_settled.empty and "book_age_ms" in gtl_settled.columns else np.nan
+            
         else:
             total_pnl = 0.0
             total_stake = 0.0
             roi = 0.0
             max_dd = 0.0
             worst_position = 0.0
+            avg_model_edge = np.nan
+            avg_kill_mom = np.nan
+            avg_source_age = np.nan
             
         results.append({
             "sizing": scheme,
@@ -238,7 +250,9 @@ def run_sizing_report(
             "settled": len(settled),
             "win": settled["settled_win"].map(_bool_or_none).astype(bool).mean() if not settled.empty else 0.0,
             "avg_ask": settled["entry_ask"].mean() if not settled.empty else 0.0,
-            "avg_edge": settled["edge"].mean() if not settled.empty else 0.0,
+            "avg_model_edge": avg_model_edge,
+            "avg_kill_mom": avg_kill_mom,
+            "avg_source_age": avg_source_age,
             "avg_shares": settled["sim_shares"].mean() if not settled.empty else 0.0,
             "total_stake": total_stake,
             "pnl_2c": total_pnl,
@@ -256,7 +270,7 @@ def run_sizing_report(
     print(f"\nSource: {source} (bankroll=${bankroll}, max_shares={max_shares}, map_cap=${max_map_notional})")
     
     print("\n## Main Summary\n")
-    main_cols = ["sizing", "positions", "settled", "win", "avg ask", "avg edge", "avg shares", "total stake", "pnl 2c", "ROI", "max DD", "worst position"]
+    main_cols = ["sizing", "positions", "settled", "win", "avg ask", "avg model edge (primary)", "avg kill mom (gettoplive)", "avg source age (s)", "avg shares", "total stake", "pnl 2c", "ROI", "max DD", "worst position"]
     main_rows = []
     for r in results:
         main_rows.append({
@@ -265,7 +279,9 @@ def run_sizing_report(
             "settled": r["settled"],
             "win": f"{r['win']*100:.1f}%",
             "avg ask": f"{r['avg_ask']:.3f}",
-            "avg edge": f"{r['avg_edge']*100:.2f}%",
+            "avg model edge (primary)": f"{r['avg_model_edge']*100:.2f}%" if not pd.isna(r['avg_model_edge']) else "N/A",
+            "avg kill mom (gettoplive)": f"{r['avg_kill_mom']:.2f}" if not pd.isna(r['avg_kill_mom']) else "N/A",
+            "avg source age (s)": f"{r['avg_source_age']:.2f}" if not pd.isna(r['avg_source_age']) else "N/A",
             "avg shares": f"{r['avg_shares']:.1f}",
             "total stake": f"{r['total_stake']:.1f}",
             "pnl 2c": f"{r['pnl_2c']:.2f}",
@@ -333,7 +349,7 @@ def run_sizing_report(
     for r in results:
         sdf = r["settled_df"]
         if sdf.empty: continue
-        mc = sdf.groupby("match_id").agg(
+        mc = sdf.groupby("map_exposure_id").agg(
             positions=("position_id", "count"),
             stake=("sim_stake", "sum"),
             pnl_2c=("sim_pnl_2c", "sum")
@@ -357,10 +373,46 @@ def run_sizing_report(
             "largest map stake": f"{largest_stake:.1f}",
             "largest map PnL": f"{largest_pnl:.2f}",
             "largest map loss": f"{largest_loss:.2f}",
-            "top 3 maps as % of PnL": f"{top3_pnl_pct*100:.1f}%",
-            "top 3 maps as % of stake": f"{top3_stake_pct*100:.1f}%"
+            "top 1 map % PnL": f"{(mc['pnl_2c'].max() / total_pnl * 100) if total_pnl > 0 else 0:.1f}%",
+            "top 3 maps % PnL": f"{top3_pnl_pct*100:.1f}%",
+            "top 3 maps % stake": f"{top3_stake_pct*100:.1f}%",
         })
     _print_table(pd.DataFrame(map_rows))
+
+    print("## Series Concentration\n")
+    series_rows = []
+    for r in results:
+        sdf = r["settled_df"]
+        if sdf.empty: continue
+        mc = sdf.groupby("match_id").agg(
+            positions=("position_id", "count"),
+            stake=("sim_stake", "sum"),
+            pnl_2c=("sim_pnl_2c", "sum")
+        ).reset_index()
+        
+        total_stake = mc["stake"].sum()
+        total_pnl = mc["pnl_2c"].sum()
+        
+        largest_stake = mc["stake"].max()
+        largest_pnl = mc["pnl_2c"].max()
+        largest_loss = mc["pnl_2c"].min()
+        
+        top3_pnl_maps = mc.sort_values("pnl_2c", ascending=False).head(3)
+        top3_stake_maps = mc.sort_values("stake", ascending=False).head(3)
+        
+        top3_pnl_pct = top3_pnl_maps["pnl_2c"].sum() / total_pnl if total_pnl != 0 else 0.0
+        top3_stake_pct = top3_stake_maps["stake"].sum() / total_stake if total_stake != 0 else 0.0
+        
+        series_rows.append({
+            "sizing": r["sizing"],
+            "largest series stake": f"{largest_stake:.1f}",
+            "largest series PnL": f"{largest_pnl:.2f}",
+            "largest series loss": f"{largest_loss:.2f}",
+            "top 1 series % PnL": f"{(mc['pnl_2c'].max() / total_pnl * 100) if total_pnl > 0 else 0:.1f}%",
+            "top 3 series % PnL": f"{top3_pnl_pct*100:.1f}%",
+            "top 3 series % stake": f"{top3_stake_pct*100:.1f}%",
+        })
+    _print_table(pd.DataFrame(series_rows))
     
     print("## Input Completeness\n")
     print(f"- fair_prob present: {allowed['fair_prob'].notna().mean()*100:.1f}%")

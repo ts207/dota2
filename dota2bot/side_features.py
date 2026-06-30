@@ -98,8 +98,12 @@ def add_base_state_features(rows: pd.DataFrame) -> pd.DataFrame:
     frame["rax_lane_advantage"] = frame["dire_rax_lanes_down"] - frame["radiant_rax_lanes_down"]
     frame = frame.sort_values(["match_id", "label_market_bucket", "received_at_ns", "side"]).reset_index(drop=True)
     frame = add_time_delta(frame, "nw_lead_clean", 100, "nw_change_100s")
+    frame = add_time_delta(frame, "nw_lead_clean", 120, "nw_change_120s")
     frame = add_time_delta(frame, "nw_lead_clean", 300, "nw_change_300s")
     frame = add_time_delta(frame, "total_kills", 100, "kills_change_100s")
+    if "book_best_ask" in frame.columns:
+        frame = add_time_delta(frame, "book_best_ask", 120, "ask_change_120s")
+        frame = add_time_delta(frame, "book_best_ask", 300, "ask_change_300s")
     return frame
 
 
@@ -113,7 +117,12 @@ def add_side_features(rows: pd.DataFrame, *, min_game_time_sec: int = RESEARCH_M
     frame["side_tower"] = sign * frame["tower_advantage"]
     frame["side_rax"] = sign * frame["rax_lane_advantage"]
     frame["side_mom_100"] = sign * frame["nw_change_100s"]
+    frame["side_mom_120"] = sign * frame["nw_change_120s"]
     frame["side_mom_300"] = sign * frame["nw_change_300s"]
+    if "ask_change_120s" in frame.columns:
+        frame["ask_delta_120"] = frame["ask_change_120s"]
+    if "ask_change_300s" in frame.columns:
+        frame["ask_delta_300"] = frame["ask_change_300s"]
     frame["side_kill_mom"] = sign * frame["kills_change_100s"]
     if "seconds_since_state_change" not in frame.columns:
         frame["seconds_since_state_change"] = np.nan

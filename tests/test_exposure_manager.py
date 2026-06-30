@@ -53,7 +53,7 @@ def test_opposite_side_blocked():
     pos = manager.process_decisions(decisions)
     assert len(pos) == 2
     assert pd.isna(pos.iloc[0]["blocked_reason"])
-    assert pos.iloc[1]["blocked_reason"] == "opposite_side_already_held"
+    assert pos.iloc[1]["blocked_reason"] == "opposite_side_already_held_strategy"
 
 
 def test_same_side_repeated_blocked_at_cap_1():
@@ -111,7 +111,7 @@ def test_deterministic_position_id():
     
     assert pos1.iloc[0]["position_id"] == pos2.iloc[0]["position_id"]
     
-    expected_id = hashlib.sha1(b"d1|paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg|test_match::1|v1").hexdigest()
+    expected_id = hashlib.sha1(b"d1|paper_winprob_logistic_evfilter_mapequiv_ask20_50_e05_gt900_mom100nonneg|test_match::1|v2").hexdigest()
     assert pos1.iloc[0]["position_id"] == expected_id
 
 
@@ -142,4 +142,37 @@ def test_load_state_append():
     pos2 = manager2.process_decisions(decisions2)
     
     assert "max_entries_reached" in pos2.iloc[0]["blocked_reason"]
+
+
+def test_portfolio_opposite_side_blocking():
+    from dota2bot.exposure_manager import ExposureManager, ExposureLimit
+    limits = {
+        "primary": ExposureLimit("primary", max_entries_per_map=1, block_opposite_side_portfolio=True),
+        "gettoplive_candidate": ExposureLimit("gettoplive_candidate", max_entries_per_map=1, block_opposite_side_portfolio=True)
+    }
+    mgr = ExposureManager(limits)
+    
+    # Primary buys radiant
+    decisions = pd.DataFrame([{
+        "decision_id": "d1",
+        "strategy_name": "primary",
+        "match_id": "m1",
+        "current_game_number": 1,
+        "side": "radiant",
+        "signal": True
+    }])
+    pos1 = mgr.process_decisions(decisions)
+    assert pos1.iloc[0]["blocked_reason"] is None
+    
+    # GetTopLive buys dire on same map -> blocked
+    decisions2 = pd.DataFrame([{
+        "decision_id": "d2",
+        "strategy_name": "gettoplive_candidate",
+        "match_id": "m1",
+        "current_game_number": 1,
+        "side": "dire",
+        "signal": True
+    }])
+    pos2 = mgr.process_decisions(decisions2)
+    assert pos2.iloc[0]["blocked_reason"] == "opposite_side_already_held_portfolio"
 
