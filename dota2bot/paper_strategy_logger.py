@@ -279,7 +279,7 @@ def score_paper_decisions(
         for row in scored.to_dict(orient="records"):
             decisions.append(_decision_row(row, spec, bundle))
     for spec in PAPER_RULE_MODEL_SPECS:
-        scored = add_rule_scores(featured.copy(), spec)
+        scored = add_rule_scores(featured.copy(), spec, decisions)
         scored["strategy_filter"] = strategy_filter_mask(scored, spec)
         scored["signal"] = scored["tradable_paper"] & scored["strategy_filter"] & (scored["edge"] >= spec.entry_threshold)
         scored["reason"] = scored.apply(lambda row: _decision_reason(row, spec.entry_threshold), axis=1)
@@ -295,11 +295,42 @@ def score_paper_decisions(
     return out[DECISION_COLUMNS]
 
 
-def add_rule_scores(frame: pd.DataFrame, spec: PaperModelSpec) -> pd.DataFrame:
+def add_rule_scores(frame: pd.DataFrame, spec: PaperModelSpec, decisions: list[dict[str, Any]] | None = None) -> pd.DataFrame:
     if spec.score_kind != "rule_binary":
         raise ValueError(f"unknown deterministic rule score_kind={spec.score_kind!r}")
     scored = frame.copy()
     rule_mask = strategy_filter_mask(scored, spec)
+    
+    if spec.model_name == "gettoplive_kill_mom_benchmark_confirm_rule":
+        # Requires a benchmark signal in the last 300s for the same map and side.
+        # We look at the currently accumulated decisions (which contains the benchmark model scored in the same chunk).
+        # This is a best-effort intra-chunk validation.
+        confirm_mask = pd.Series(False, index=scored.index)
+        if decisions:
+            bench_sigs = [d for d in decisions if d["candidate_group"] == "benchmark" and d["signal"]]
+            if bench_sigs:
+                bench_df = pd.DataFrame(bench_sigs)
+                bench_df["entry_received_at_ns"] = pd.to_numeric(bench_df["entry_received_at_ns"])
+                
+                scored_times = pd.to_numeric(scored["received_at_ns"], errors="coerce")
+                for idx in scored.index:
+                    if not rule_mask.loc[idx]:
+                        continue
+                    r_map = scored.loc[idx, "map_exposure_id"]
+                    r_side = scored.loc[idx, "side"]
+                    r_time = scored_times.loc[idx]
+                    
+                    # check if any benchmark signal matches
+                    valid = bench_df[
+                        (bench_df["map_exposure_id"] == r_map) &
+                        (bench_df["side"] == r_side) &
+                        (bench_df["entry_received_at_ns"] <= r_time) &
+                        (bench_df["entry_received_at_ns"] >= r_time - 300 * 1e9)
+                    ]
+                    if not valid.empty:
+                        confirm_mask.loc[idx] = True
+        rule_mask = rule_mask & confirm_mask
+
     scored["fair_prob"] = np.nan
     scored["edge"] = np.where(rule_mask, 1.0, 0.0)
     return scored

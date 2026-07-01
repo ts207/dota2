@@ -101,6 +101,33 @@ PAPER_RULE_SPECS = (
         max_source_update_age_sec=5.0,
         deterministic_rule=True,
     ),
+    StrategySpec(
+        model_name="gettoplive_kill_mom_favorite_hold_rule",
+        strategy_name="paper_gettoplive_kill_mom_favorite_ask65_gt600_shadow_v1",
+        candidate_group="gettoplive_candidate",
+        entry_threshold=1.0,
+        score_kind="rule_binary",
+        market_scopes=ACTIVE_MARKET_EQUIVALENT_SCOPES,
+        min_ask=0.50,
+        max_ask=0.65,
+        min_side_kill_mom=1.0,
+        min_game_time_sec=600,
+        max_source_update_age_sec=10.0,
+        deterministic_rule=True,
+    ),
+    StrategySpec(
+        model_name="gettoplive_kill_mom_benchmark_confirm_rule",
+        strategy_name="paper_gettoplive_kill_mom_benchmark_confirm_shadow_v1",
+        candidate_group="gettoplive_candidate",
+        entry_threshold=1.0,
+        score_kind="rule_binary",
+        market_scopes=ACTIVE_MARKET_EQUIVALENT_SCOPES,
+        min_ask=0.50,
+        max_ask=0.80,
+        min_side_kill_mom=1.0,
+        max_source_update_age_sec=5.0,
+        deterministic_rule=True,
+    ),
 )
 
 
