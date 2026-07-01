@@ -61,8 +61,9 @@ def sample_frame():
     ])
 
 def test_shared_sizing_equivalence(sample_frame):
-    # simulate_sizing is used by both
+    # compute expected stake and pnl
     df1 = simulate_sizing(sample_frame, "group_specific_default")
+    expected_stats = df1.groupby("strategy_name")[["sim_stake", "sim_pnl_2c"]].sum()
     
     res = run_statistical_report_for_sizing(
         frame=sample_frame,
@@ -72,12 +73,13 @@ def test_shared_sizing_equivalence(sample_frame):
         seed=42
     )
     
-    # We should have the same sim_shares values as df1
-    df1_strat_a_shares = df1[df1["strategy_name"] == "strat_a"]["sim_shares"].values
-    # In run_statistical_report_for_sizing, we can't directly check the dataframe easily 
-    # as it's not returned, but we can verify it ran without error and returned metrics
     assert "error" not in res
-    assert len(res["core_metrics"]) == 2
+    
+    metrics = {m["Strategy"]: m for m in res["core_metrics"]}
+    assert metrics["strat_a"]["Stake"] == f"{expected_stats.loc['strat_a', 'sim_stake']:.1f}"
+    assert metrics["strat_a"]["PnL 2c"] == f"{expected_stats.loc['strat_a', 'sim_pnl_2c']:.2f}"
+    assert metrics["strat_b"]["Stake"] == f"{expected_stats.loc['strat_b', 'sim_stake']:.1f}"
+    assert metrics["strat_b"]["PnL 2c"] == f"{expected_stats.loc['strat_b', 'sim_pnl_2c']:.2f}"
 
 def test_chronological_drawdown(sample_frame):
     # Create a frame with out of order time
@@ -144,4 +146,40 @@ def test_sizing_all(sample_frame, tmp_path, capsys):
     assert len(output) == 6 # flat_1, flat_5, kill_mom_scaled, edge_scaled, conservative, group
     sizings = [r["sizing"] for r in output]
     assert "conservative_group_default" in sizings
+
+def test_unknown_sizing_raises_value_error(sample_frame):
+    with pytest.raises(ValueError, match="unknown sizing scheme"):
+        simulate_sizing(sample_frame, "conservtive_group_default")
+
+def test_sizing_order_independence(sample_frame):
+    # Cap is 200. Let's make an entry that uses 200 map notional.
+    # If order is correct, the earlier one gets the map cap.
+    frame = sample_frame.copy()
+    
+    # 2 rows for the same map
+    r1 = frame.iloc[0].copy()
+    r1["entry_received_at_ns"] = 1000
+    r1["map_exposure_id"] = "map_shared"
+    r1["entry_ask"] = 1.0 # price 1.0
+    
+    r2 = frame.iloc[0].copy()
+    r2["entry_received_at_ns"] = 2000
+    r2["map_exposure_id"] = "map_shared"
+    r2["entry_ask"] = 1.0
+    
+    # We will use "flat_25_liquidity_unchecked" but with high bankroll / desired shares?
+    # Wait, flat_25 uses 25 shares. 25 * 1.0 = 25 notional. Let's set max map notional to 25.
+    df_sorted = pd.concat([pd.DataFrame([r1]), pd.DataFrame([r2])], ignore_index=True)
+    df_reversed = pd.concat([pd.DataFrame([r2]), pd.DataFrame([r1])], ignore_index=True)
+    
+    res_sorted = simulate_sizing(df_sorted, "flat_25_liquidity_unchecked", max_map_notional=25.0)
+    res_reversed = simulate_sizing(df_reversed, "flat_25_liquidity_unchecked", max_map_notional=25.0)
+    
+    # In both cases, the row with entry_received_at_ns == 1000 should get the shares (25.0)
+    # and the row with entry_received_at_ns == 2000 should get 0 shares.
+    assert res_sorted[res_sorted["entry_received_at_ns"] == 1000]["sim_shares"].iloc[0] == 25.0
+    assert res_sorted[res_sorted["entry_received_at_ns"] == 2000]["sim_shares"].iloc[0] == 0.0
+    
+    assert res_reversed[res_reversed["entry_received_at_ns"] == 1000]["sim_shares"].iloc[0] == 25.0
+    assert res_reversed[res_reversed["entry_received_at_ns"] == 2000]["sim_shares"].iloc[0] == 0.0
 

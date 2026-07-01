@@ -21,6 +21,8 @@ def _format_num(val) -> str:
     return f"{val:.2f}"
 
 def _print_table(df: pd.DataFrame):
+    if df.empty:
+        return
     print("| " + " | ".join(df.columns) + " |")
     print("| " + " | ".join(["---"] * len(df.columns)) + " |")
     for _, row in df.iterrows():
@@ -62,7 +64,7 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
         
     print(f"Base universe rows: {len(df)}")
     
-    # Build actual lag features
+    # Build actual lag features with 60s tolerance
     df["target_time_300"] = df["received_at_ns"] - 300_000_000_000
     df = df.sort_values("target_time_300")
     
@@ -75,11 +77,12 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
         right_on="received_at_ns",
         by=["canonical_exposure_id", "side"],
         direction="backward",
+        tolerance=60_000_000_000,
         suffixes=("", "_lag_300")
     )
     
-    # Clean up merge artifacts
-    df = df.drop(columns=["received_at_ns_lag_300"])
+    # Require a valid lag row
+    df = df[df["received_at_ns_lag_300"].notna()].copy()
     
     # Calculate recovery metrics based on actual lag
     df["side_lead_lag_300"] = df["side_nw_lag_300"]
@@ -139,7 +142,10 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
         avg_rec = c_df["lead_recovery_300"].mean()
         avg_ask_delta = c_df["ask_delta_300"].mean()
         pnl_2c = c_df["pnl_2c"].sum()
-        roi = pnl_2c / trades
+        
+        # Stake-based ROI
+        stake = c_df["book_best_ask"].sum()
+        roi = pnl_2c / stake if stake > 0 else 0
         
         # Max DD and Worst position
         sorted_pnl = c_df.sort_values("received_at_ns")["pnl_2c"]
@@ -155,14 +161,14 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
         main_rows.append({
             "candidate": c_name,
             "trades": trades,
-            "win": _format_pct(win_pct),
-            "avg ask": f"{avg_ask:.3f}",
-            "avg recovery": f"{avg_rec:.0f}",
-            "avg ask_delta": f"{avg_ask_delta:.3f}",
-            "pnl 2c": f"{pnl_2c:.2f}",
-            "ROI": _format_pct(roi),
-            "max DD": f"{max_dd:.2f}",
-            "pnl w/o top3": f"{pnl_wo_top3:.2f}",
+            "win_num": win_pct,
+            "avg_ask_num": avg_ask,
+            "avg_rec_num": avg_rec,
+            "avg_ask_delta_num": avg_ask_delta,
+            "pnl_2c_num": pnl_2c,
+            "roi_num": roi,
+            "max_dd_num": max_dd,
+            "pnl_wo_top3_num": pnl_wo_top3,
         })
         
         overlap_active = c_df["is_active"].sum()
@@ -181,15 +187,34 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
         
     print("\n# Reversal Research Report\n")
     print("## Main Summary\n")
+    
     if main_rows:
-        _print_table(pd.DataFrame(main_rows).sort_values("pnl 2c", ascending=False))
+        # Sort numerically before formatting
+        main_df = pd.DataFrame(main_rows).sort_values("pnl_2c_num", ascending=False)
+        
+        formatted_main = pd.DataFrame()
+        formatted_main["candidate"] = main_df["candidate"]
+        formatted_main["trades"] = main_df["trades"]
+        formatted_main["win"] = main_df["win_num"].apply(_format_pct)
+        formatted_main["avg ask"] = main_df["avg_ask_num"].apply(lambda x: f"{x:.3f}")
+        formatted_main["avg recovery"] = main_df["avg_rec_num"].apply(lambda x: f"{x:.0f}")
+        formatted_main["avg ask_delta"] = main_df["avg_ask_delta_num"].apply(lambda x: f"{x:.3f}")
+        formatted_main["pnl 2c"] = main_df["pnl_2c_num"].apply(lambda x: f"{x:.2f}")
+        formatted_main["ROI"] = main_df["roi_num"].apply(_format_pct)
+        formatted_main["max DD"] = main_df["max_dd_num"].apply(lambda x: f"{x:.2f}")
+        formatted_main["pnl w/o top3"] = main_df["pnl_wo_top3_num"].apply(lambda x: f"{x:.2f}")
+        
+        _print_table(formatted_main)
+        
+        best_cand = formatted_main.iloc[0]["candidate"]
+    else:
+        best_cand = None
         
     print("## Overlap with Active Strategies\n")
     if overlap_rows:
         _print_table(pd.DataFrame(overlap_rows))
         
-    if main_rows:
-        best_cand = pd.DataFrame(main_rows).sort_values("pnl 2c", ascending=False).iloc[0]["candidate"]
+    if best_cand:
         print(f"## Concentration for Best Candidate ({best_cand})\n")
         c_df = candidates[best_cand]
         map_pnls = c_df.groupby("canonical_exposure_id")["pnl_2c"].sum()
@@ -216,4 +241,3 @@ if __name__ == "__main__":
     parser.add_argument("--format", type=str, default="markdown")
     args = parser.parse_args()
     run_reversal_report(args.logs_root, args.format)
-

@@ -18,6 +18,9 @@ def simulate_sizing(
     
     df = positions.copy()
 
+    if "entry_received_at_ns" in df.columns:
+        df = df.sort_values("entry_received_at_ns").reset_index(drop=True)
+
     # Calculate liquidity cap
     if "book_ask_size" not in df.columns:
         df["book_ask_size"] = np.nan
@@ -109,7 +112,7 @@ def simulate_sizing(
             else:
                 desired_shares = 1.0
         else:
-            desired_shares = 1.0
+            raise ValueError(f"unknown sizing scheme: {sizing}")
 
         # Apply caps
         capped_shares = min(desired_shares, max_shares)
