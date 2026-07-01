@@ -182,8 +182,11 @@ class ExposureManager:
                     pos["position_pnl_2c"] = 0.0
                     return pos
 
+        ACTIVE_PORTFOLIO_GROUPS = {"primary", "gettoplive_candidate"}
         if limit.block_opposite_side_portfolio:
             for p in existing:
+                if p.get("candidate_group") not in ACTIVE_PORTFOLIO_GROUPS:
+                    continue
                 if not p.get("blocked_reason") and p["side"] != pos["side"]:
                     pos["blocked_reason"] = "opposite_side_already_held_portfolio"
                     pos["shares"] = 0.0

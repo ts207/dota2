@@ -156,6 +156,7 @@ def test_portfolio_opposite_side_blocking():
     decisions = pd.DataFrame([{
         "decision_id": "d1",
         "strategy_name": "primary",
+        "candidate_group": "primary",
         "match_id": "m1",
         "current_game_number": 1,
         "side": "radiant",
@@ -168,6 +169,7 @@ def test_portfolio_opposite_side_blocking():
     decisions2 = pd.DataFrame([{
         "decision_id": "d2",
         "strategy_name": "gettoplive_candidate",
+        "candidate_group": "gettoplive_candidate",
         "match_id": "m1",
         "current_game_number": 1,
         "side": "dire",
@@ -175,4 +177,49 @@ def test_portfolio_opposite_side_blocking():
     }])
     pos2 = mgr.process_decisions(decisions2)
     assert pos2.iloc[0]["blocked_reason"] == "opposite_side_already_held_portfolio"
+
+
+def test_benchmark_contamination_portfolio_blocking():
+    from dota2bot.exposure_manager import ExposureManager, ExposureLimit
+    limits = {
+        "primary": ExposureLimit("primary", max_entries_per_map=1, block_opposite_side_portfolio=True),
+        "gettoplive_candidate": ExposureLimit("gettoplive_candidate", max_entries_per_map=1, block_opposite_side_portfolio=True),
+        "benchmark": ExposureLimit("benchmark", max_entries_per_map=1, block_opposite_side_portfolio=False)
+    }
+    mgr = ExposureManager(limits)
+    
+    decisions = pd.DataFrame([
+        {
+            "decision_id": "d1",
+            "candidate_group": "benchmark",
+            "strategy_name": "benchmark",
+            "match_id": "m1",
+            "current_game_number": 1,
+            "side": "radiant",
+            "signal": True
+        },
+        {
+            "decision_id": "d2",
+            "candidate_group": "primary",
+            "strategy_name": "primary",
+            "match_id": "m1",
+            "current_game_number": 1,
+            "side": "dire",
+            "signal": True
+        },
+        {
+            "decision_id": "d3",
+            "candidate_group": "gettoplive_candidate",
+            "strategy_name": "gettoplive_candidate",
+            "match_id": "m1",
+            "current_game_number": 1,
+            "side": "radiant",
+            "signal": True
+        }
+    ])
+    pos = mgr.process_decisions(decisions)
+    # primary shouldn't be blocked by benchmark
+    assert pd.isna(pos.iloc[1]["blocked_reason"])
+    # gettoplive_candidate should be blocked by primary
+    assert pos.iloc[2]["blocked_reason"] == "opposite_side_already_held_portfolio"
 

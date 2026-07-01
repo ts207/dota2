@@ -402,6 +402,7 @@ def main() -> None:
             source=args.source,
             sizing=args.sizing,
             bootstrap_samples=args.bootstrap_samples,
+            seed=args.seed,
             output_format=args.format,
         )
     elif args.command == "reversal-research-report":

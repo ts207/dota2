@@ -1,8 +1,8 @@
 import argparse
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
+from itertools import product
 
 from dota2bot.paper_strategy_logger import (
     EXECUTABLE_BACKTEST_PATH, 
@@ -29,6 +29,9 @@ def _print_table(df: pd.DataFrame):
 
 def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
     print("Loading historical backtest snapshots...")
+    if not EXECUTABLE_BACKTEST_PATH.exists():
+        print(f"Path not found: {EXECUTABLE_BACKTEST_PATH}")
+        return
     rows = pd.read_parquet(EXECUTABLE_BACKTEST_PATH)
     
     print("Computing features...")
@@ -59,11 +62,33 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
         
     print(f"Base universe rows: {len(df)}")
     
-    df["side_lead_lag_300"] = df["side_nw"] - df["side_mom_300"]
-    df["nw_recovery_300"] = df["side_mom_300"]
+    # Build actual lag features
+    df["target_time_300"] = df["received_at_ns"] - 300_000_000_000
+    df = df.sort_values("target_time_300")
+    
+    df_past = df[["received_at_ns", "canonical_exposure_id", "side", "side_nw", "book_best_ask"]].copy()
+    df_past = df_past.sort_values("received_at_ns")
+    
+    df = pd.merge_asof(
+        df, df_past,
+        left_on="target_time_300",
+        right_on="received_at_ns",
+        by=["canonical_exposure_id", "side"],
+        direction="backward",
+        suffixes=("", "_lag_300")
+    )
+    
+    # Clean up merge artifacts
+    df = df.drop(columns=["received_at_ns_lag_300"])
+    
+    # Calculate recovery metrics based on actual lag
+    df["side_lead_lag_300"] = df["side_nw_lag_300"]
+    df["lead_recovery_300"] = df["side_nw"] - df["side_nw_lag_300"]
+    df["ask_delta_300"] = df["book_best_ask"] - df["book_best_ask_lag_300"]
+    
     df["recovery_ratio_300"] = np.where(
-        df["side_lead_lag_300"] < 0,
-        df["nw_recovery_300"] / df["side_lead_lag_300"].abs(),
+        (df["side_lead_lag_300"] < 0) & (df["side_lead_lag_300"].notna()),
+        df["lead_recovery_300"] / df["side_lead_lag_300"].abs(),
         0.0
     )
     
@@ -80,20 +105,27 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
     df["has_primary"] = df["has_primary"].fillna(False)
     df["has_gtl"] = df["has_gtl"].fillna(False)
     
-    # We will define REVERSAL_CATCHUP_VALUE_V1
-    v1_mask = (
-        (df["side_lead_lag_300"] <= -5000) &
-        (df["nw_recovery_300"] >= 2500) &
-        (df["recovery_ratio_300"] >= 0.35) &
-        (df["ask_delta_300"] <= 0.10) &
-        (df["side_mom_100"] >= 0) &
-        (df["game_time_sec"] >= 900) &
-        (df["book_best_ask"].between(0.20, 0.50))
-    )
+    candidates = {}
     
-    candidates = {
-        "REVERSAL_CATCHUP_VALUE_V1": df[v1_mask].sort_values("received_at_ns").drop_duplicates(subset=["match_id", "canonical_exposure_id", "side"], keep="first")
-    }
+    # Grid search for candidates
+    # prior deficit, recovery, ask delta, ask range, game time, momentum confirmation
+    deficits = [-4000, -5000, -6000]
+    recoveries = [2000, 2500, 3000]
+    ask_deltas = [0.10, 0.15]
+    
+    for d, r, ad in product(deficits, recoveries, ask_deltas):
+        name = f"V_{d}_{r}_{ad}"
+        mask = (
+            (df["side_lead_lag_300"] <= d) &
+            (df["lead_recovery_300"] >= r) &
+            (df["recovery_ratio_300"] >= 0.35) &
+            (df["ask_delta_300"] <= ad) &
+            (df["side_mom_100"] >= 0) &
+            (df["game_time_sec"] >= 900) &
+            (df["book_best_ask"].between(0.20, 0.50))
+        )
+        cand_df = df[mask].sort_values("received_at_ns").drop_duplicates(subset=["canonical_exposure_id", "side"], keep="first")
+        candidates[name] = cand_df
     
     main_rows = []
     overlap_rows = []
@@ -104,7 +136,7 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
         wins = c_df["settled_win"].sum()
         win_pct = wins / trades
         avg_ask = c_df["book_best_ask"].mean()
-        avg_rec = c_df["nw_recovery_300"].mean()
+        avg_rec = c_df["lead_recovery_300"].mean()
         avg_ask_delta = c_df["ask_delta_300"].mean()
         pnl_2c = c_df["pnl_2c"].sum()
         roi = pnl_2c / trades
@@ -112,13 +144,17 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
         # Max DD and Worst position
         sorted_pnl = c_df.sort_values("received_at_ns")["pnl_2c"]
         cum_pnl = sorted_pnl.cumsum()
-        max_dd = (cum_pnl.cummax() - cum_pnl).max()
-        worst = sorted_pnl.min()
+        max_dd = (cum_pnl.cummax() - cum_pnl).max() if len(cum_pnl) > 0 else 0
+        worst = sorted_pnl.min() if len(sorted_pnl) > 0 else 0
+        
+        # Top map removal
+        map_pnls = c_df.groupby("canonical_exposure_id")["pnl_2c"].sum()
+        total_pnl = map_pnls.sum()
+        pnl_wo_top3 = total_pnl - map_pnls.sort_values(ascending=False).head(3).sum() if len(map_pnls) > 0 else 0
         
         main_rows.append({
             "candidate": c_name,
             "trades": trades,
-            "settled": trades,
             "win": _format_pct(win_pct),
             "avg ask": f"{avg_ask:.3f}",
             "avg recovery": f"{avg_rec:.0f}",
@@ -126,7 +162,7 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
             "pnl 2c": f"{pnl_2c:.2f}",
             "ROI": _format_pct(roi),
             "max DD": f"{max_dd:.2f}",
-            "worst": f"{worst:.2f}"
+            "pnl w/o top3": f"{pnl_wo_top3:.2f}",
         })
         
         overlap_active = c_df["is_active"].sum()
@@ -146,38 +182,27 @@ def run_reversal_report(logs_root: Path, format_type: str = "markdown"):
     print("\n# Reversal Research Report\n")
     print("## Main Summary\n")
     if main_rows:
-        _print_table(pd.DataFrame(main_rows))
+        _print_table(pd.DataFrame(main_rows).sort_values("pnl 2c", ascending=False))
         
     print("## Overlap with Active Strategies\n")
     if overlap_rows:
         _print_table(pd.DataFrame(overlap_rows))
         
-    print("## Failure Modes\n")
-    print("""
-fake comeback:
-  recovered, then lost
-late obvious comeback:
-  ask already repriced
-stale data:
-  source age too high
-overlap:
-  already caught by active strategy
-""")
-
-    if len(candidates["REVERSAL_CATCHUP_VALUE_V1"]) > 0:
-        v1_df = candidates["REVERSAL_CATCHUP_VALUE_V1"]
-        print("## Concentration\n")
-        map_pnls = v1_df.groupby("match_id")["pnl_2c"].sum()
-        map_stakes = v1_df.groupby("match_id").size()
-        largest_losing = map_pnls.min()
-        largest_winning = map_pnls.max()
+    if main_rows:
+        best_cand = pd.DataFrame(main_rows).sort_values("pnl 2c", ascending=False).iloc[0]["candidate"]
+        print(f"## Concentration for Best Candidate ({best_cand})\n")
+        c_df = candidates[best_cand]
+        map_pnls = c_df.groupby("canonical_exposure_id")["pnl_2c"].sum()
+        map_stakes = c_df.groupby("canonical_exposure_id").size()
+        largest_losing = map_pnls.min() if len(map_pnls) > 0 else 0
+        largest_winning = map_pnls.max() if len(map_pnls) > 0 else 0
         total_pnl = map_pnls.sum()
         total_stake = map_stakes.sum()
         top3_pnl_pct = map_pnls.sort_values(ascending=False).head(3).sum() / total_pnl if total_pnl > 0 else 0
         top3_stake_pct = map_stakes.sort_values(ascending=False).head(3).sum() / total_stake if total_stake > 0 else 0
         
         conc_df = pd.DataFrame([{
-            "candidate": "REVERSAL_CATCHUP_VALUE_V1",
+            "candidate": best_cand,
             "largest losing map": f"{largest_losing:.2f}",
             "largest winning map": f"{largest_winning:.2f}",
             "top 3 maps % of PnL": _format_pct(top3_pnl_pct),
@@ -191,3 +216,4 @@ if __name__ == "__main__":
     parser.add_argument("--format", type=str, default="markdown")
     args = parser.parse_args()
     run_reversal_report(args.logs_root, args.format)
+

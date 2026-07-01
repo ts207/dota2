@@ -106,110 +106,23 @@ def run_sizing_report(
         "kill_mom_scaled_0.5pct_cap25",
         "kelly_05_cap25",
         "kelly_10_cap25",
-        "group_specific_default"
+        "group_specific_default",
+        "conservative_group_default"
     ]
 
     results = []
     
+    from .sizing_engine import simulate_sizing
+    
     for scheme in schemes:
-        map_used_notional = defaultdict(float)
-        sim_shares_list = []
-        liq_capped_list = []
-        
-        for idx, row in allowed.iterrows():
-            entry_ask = float(row["entry_ask"])
-            if entry_ask <= 0:
-                entry_ask = 1.0 # fallback
-                
-            liq_cap = float(row["liquidity_cap"])
-            edge = float(row["edge"])
-            fair_prob = float(row["fair_prob"])
-            map_id = row["map_exposure_id"]
-
-            if scheme == "flat_1":
-                desired_shares = 1.0
-            elif scheme == "flat_5":
-                desired_shares = 5.0
-            elif scheme == "flat_25_liquidity_unchecked":
-                desired_shares = min(25.0, liq_cap)
-            elif scheme == "edge_scaled_0.5pct_bankroll_cap25":
-                base_notional = bankroll * 0.005
-                multiplier = _clamp(edge / 0.10, 0.25, 2.0) if not pd.isna(edge) else 0.25
-                target_notional = base_notional * multiplier
-                desired_shares = target_notional / entry_ask
-            elif scheme == "kill_mom_scaled_0.5pct_cap25":
-                side_kill_mom = float(row.get("side_kill_mom", 0.0))
-                source_age = float(row.get("source_update_age_sec", 0.0))
-                if pd.isna(side_kill_mom): side_kill_mom = 0.0
-                if pd.isna(source_age): source_age = 5.0
-
-                base_notional = bankroll * 0.005
-                kill_multiplier = _clamp(side_kill_mom / 3.0, 0.5, 2.0)
-                age_multiplier = _clamp((5.0 - source_age) / 5.0, 0.25, 1.0)
-                target_notional = base_notional * kill_multiplier * age_multiplier
-                desired_shares = target_notional / entry_ask
-            elif scheme == "kelly_05_cap25":
-                effective_price = entry_ask + 0.02
-                kelly_fraction = max(0.0, (fair_prob - effective_price) / (1 - effective_price) if effective_price < 1 and not pd.isna(fair_prob) else 0.0)
-                target_notional = bankroll * 0.05 * kelly_fraction
-                desired_shares = target_notional / entry_ask
-            elif scheme == "kelly_10_cap25":
-                effective_price = entry_ask + 0.02
-                kelly_fraction = max(0.0, (fair_prob - effective_price) / (1 - effective_price) if effective_price < 1 and not pd.isna(fair_prob) else 0.0)
-                target_notional = bankroll * 0.10 * kelly_fraction
-                desired_shares = target_notional / entry_ask
-            elif scheme == "group_specific_default":
-                group = row.get("candidate_group")
-                if group == "primary":
-                    base_notional = bankroll * 0.005
-                    multiplier = _clamp(edge / 0.10, 0.25, 2.0) if not pd.isna(edge) else 0.25
-                    target_notional = base_notional * multiplier
-                    desired_shares = target_notional / entry_ask
-                elif group == "gettoplive_candidate":
-                    side_kill_mom = float(row.get("side_kill_mom", 0.0))
-                    source_age = float(row.get("source_update_age_sec", 0.0))
-                    if pd.isna(side_kill_mom): side_kill_mom = 0.0
-                    if pd.isna(source_age): source_age = 5.0
-
-                    base_notional = bankroll * 0.005
-                    kill_multiplier = _clamp(side_kill_mom / 3.0, 0.5, 2.0)
-                    age_multiplier = _clamp((5.0 - source_age) / 5.0, 0.25, 1.0)
-                    target_notional = base_notional * kill_multiplier * age_multiplier
-                    desired_shares = target_notional / entry_ask
-                else:
-                    desired_shares = 1.0 # fallback
-            else:
-                desired_shares = 0.0
-
-            # Apply caps
-            capped_shares = min(desired_shares, max_shares)
-            capped_shares = min(capped_shares, max_position_notional / entry_ask)
-            
-            # Apply liquidity cap to non-flat_1/5
-            if scheme not in ["flat_1", "flat_5"]:
-                capped_shares = min(capped_shares, liq_cap)
-
-            desired_notional = capped_shares * entry_ask
-            remaining_map_notional = max_map_notional - map_used_notional[map_id]
-            final_notional = min(desired_notional, remaining_map_notional)
-            
-            final_shares = final_notional / entry_ask
-            map_used_notional[map_id] += final_notional
-            
-            sim_shares_list.append(final_shares)
-            
-            # Check if liquidity capped (only matters if we were above liq cap before other caps, or if final == liq_cap)
-            # Simplified: Did liquidity cap reduce it below desired_shares (after max_shares/max_notional)?
-            capped_by_liq = (capped_shares == liq_cap and desired_shares > liq_cap)
-            liq_capped_list.append(capped_by_liq)
-
-        scheme_df = allowed.copy()
-        scheme_df["sim_shares"] = sim_shares_list
-        scheme_df["liq_capped"] = liq_capped_list
-        
-        # Calculate PnL (only for settled)
-        scheme_df["sim_stake"] = scheme_df["sim_shares"] * scheme_df["entry_ask"]
-        scheme_df["sim_pnl_2c"] = scheme_df["sim_shares"] * scheme_df["pnl_per_share_2c"]
+        scheme_df = simulate_sizing(
+            allowed,
+            sizing=scheme,
+            bankroll=bankroll,
+            max_shares=max_shares,
+            max_position_notional=max_position_notional,
+            max_map_notional=max_map_notional,
+        )
         scheme_df["worst_case_loss"] = scheme_df["sim_shares"] * (scheme_df["entry_ask"] + 0.02)
         
         settled = scheme_df[scheme_df["settled_win"].notna()].copy()
