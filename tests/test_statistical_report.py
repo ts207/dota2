@@ -14,7 +14,7 @@ def sample_frame():
             "blocked_reason": None,
             "strategy_name": "strat_a",
             "candidate_group": "primary",
-            "map_exposure_id": "map_1",
+            "blocked_reason": None, "map_exposure_id": "map_1",
             "entry_ask": 0.5,
             "pnl_per_share_2c": 0.1,
             "edge": 0.08,
@@ -30,7 +30,7 @@ def sample_frame():
             "blocked_reason": None,
             "strategy_name": "strat_a",
             "candidate_group": "primary",
-            "map_exposure_id": "map_2",
+            "blocked_reason": None, "map_exposure_id": "map_2",
             "entry_ask": 0.6,
             "pnl_per_share_2c": -0.1,
             "edge": 0.06,
@@ -46,7 +46,7 @@ def sample_frame():
             "blocked_reason": None,
             "strategy_name": "strat_b",
             "candidate_group": "gettoplive_candidate",
-            "map_exposure_id": "map_3",
+            "blocked_reason": None, "map_exposure_id": "map_3",
             "entry_ask": 0.4,
             "pnl_per_share_2c": 0.2,
             "edge": 0.02,
@@ -183,3 +183,24 @@ def test_sizing_order_independence(sample_frame):
     assert res_reversed[res_reversed["entry_received_at_ns"] == 1000]["sim_shares"].iloc[0] == 25.0
     assert res_reversed[res_reversed["entry_received_at_ns"] == 2000]["sim_shares"].iloc[0] == 0.0
 
+
+def test_statistical_report_strategy_name_filter_isolates_ask65_shadow(tmp_path: Path):
+    from dota2bot.statistical_report import run_statistical_report_for_sizing
+    
+    # create a dummy frame with two strategies
+    frame = pd.DataFrame([
+        {"position_id": "1", "strategy_name": "paper_gettoplive_kill_mom_favorite_hold_v1", "candidate_group": "gettoplive_candidate", "settled_win": True, "entry_ask": 0.5, "book_ask_size_log": 2, "sim_pnl_2c": 0.5, "sim_stake": 1, "blocked_reason": None, "map_exposure_id": "1", "pnl_per_share_2c": 0.5, "entry_received_at_ns": 1000},
+        {"position_id": "2", "strategy_name": "paper_gettoplive_kill_mom_favorite_ask65_gt600_shadow_v1", "candidate_group": "gettoplive_candidate", "settled_win": True, "entry_ask": 0.5, "book_ask_size_log": 2, "sim_pnl_2c": 0.3, "sim_stake": 1, "blocked_reason": None, "map_exposure_id": "2", "pnl_per_share_2c": 0.3, "entry_received_at_ns": 1000},
+    ])
+    
+    res = run_statistical_report_for_sizing(
+        frame=frame,
+        source="gettoplive",
+        sizing="flat_1",
+        bootstrap_samples=10,
+        seed=42,
+        strategy_name="paper_gettoplive_kill_mom_favorite_ask65_gt600_shadow_v1"
+    )
+    
+    assert res["core_metrics"][0]["Positions"] == 1 # Only 1 position
+    

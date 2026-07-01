@@ -35,6 +35,7 @@ def run_sizing_report(
     max_position_notional: float = 100.0,
     max_map_notional: float = 200.0,
     output_format: str = "markdown",
+    strategy_name: str | None = None,
 ) -> list[dict[str, Any]]:
     input_dir = logs_root / input_name
     if not input_dir.exists():
@@ -49,8 +50,21 @@ def run_sizing_report(
     # Filter rules
     allowed = frame[frame["blocked_reason"].isna()].copy()
     if allowed.empty:
-        print("No allowed positions.")
-        return
+        if output_format == "json":
+            print(json.dumps({"error": "No allowed positions."}))
+        else:
+            print("No allowed positions.")
+        return []
+
+    if strategy_name is not None:
+        if "strategy_name" in allowed.columns:
+            allowed = allowed[allowed["strategy_name"] == strategy_name]
+        if allowed.empty:
+            if output_format == "json":
+                print(json.dumps({"error": f"No allowed positions after filtering for strategy_name={strategy_name}."}))
+            else:
+                print(f"No allowed positions after filtering for strategy_name={strategy_name}.")
+            return []
 
     # Filter source
     if source == "active":
@@ -180,7 +194,10 @@ def run_sizing_report(
 
     # Render Report
     print("# Sizing Report")
-    print(f"\nSource: {source} (bankroll=${bankroll}, max_shares={max_shares}, map_cap=${max_map_notional})")
+    if strategy_name:
+        print(f"\nSource: {source}, Strategy: {strategy_name} (bankroll=${bankroll}, max_shares={max_shares}, map_cap=${max_map_notional})")
+    else:
+        print(f"\nSource: {source} (bankroll=${bankroll}, max_shares={max_shares}, map_cap=${max_map_notional})")
     
     print("\n## Main Summary\n")
     main_cols = ["sizing", "positions", "settled", "win", "avg ask", "avg model edge (primary)", "avg kill mom (gettoplive)", "avg source age (s)", "avg shares", "total stake", "pnl 2c", "ROI", "max DD", "worst position"]
@@ -377,6 +394,7 @@ def add_sizing_report_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--logs-root", type=Path, default=Path("logs"))
     parser.add_argument("--input-name", type=str, default="paper_positions")
     parser.add_argument("--source", type=str, default="active", choices=["active", "primary", "gettoplive", "benchmark", "all_non_control"])
+    parser.add_argument("--strategy-name", type=str, default=None, help="Filter to a specific strategy_name")
     parser.add_argument("--bankroll", type=float, default=1000.0)
     parser.add_argument("--max-shares", type=float, default=25.0)
     parser.add_argument("--max-position-notional", type=float, default=100.0)
@@ -397,6 +415,7 @@ def main() -> None:
         max_position_notional=args.max_position_notional,
         max_map_notional=args.max_map_notional,
         output_format=args.format,
+        strategy_name=args.strategy_name,
     )
 
 if __name__ == "__main__":

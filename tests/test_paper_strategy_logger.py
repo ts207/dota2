@@ -58,6 +58,7 @@ def test_score_paper_decisions_logs_paper_validation_suite():
         "market_gettoplive_logistic": True,
         "market_only_logistic": True,
         "gettoplive_kill_mom_favorite_hold_rule": False,
+        "gettoplive_kill_mom_benchmark_confirm_rule": False,
     }
     assert set(decisions["model_name"]) == {spec.model_name for spec in PAPER_DECISION_MODEL_SPECS}
     assert decisions.loc[decisions["signal"].fillna(False), "signal_group"].unique().tolist() == ["benchmark_and_control"]
@@ -68,7 +69,7 @@ def test_paper_specs_use_active_strategy_contract():
     assert PAPER_MODEL_SPECS == list(PAPER_MARKET_ANCHOR_SPECS)
     assert PAPER_DECISION_MODEL_SPECS == list(PAPER_DECISION_SPECS)
     assert len(PAPER_MODEL_SPECS) == 3
-    assert len(PAPER_RULE_SPECS) == 1
+    assert len(PAPER_RULE_SPECS) == 4
     assert PAPER_MODEL_SPECS[0].model_name == "winprob_logistic_evfilter"
     assert PAPER_MODEL_SPECS[0].entry_threshold == 0.05
     assert PAPER_MODEL_SPECS[0].score_kind == "win_prob_2c"
@@ -144,7 +145,7 @@ def test_gettoplive_rule_signals_fresh_kill_momentum_favorite():
     )
 
     decisions = score_paper_decisions(pd.DataFrame([first, second]), bundle)
-    rule = decisions[decisions["model_name"] == "gettoplive_kill_mom_favorite_hold_rule"].sort_values("received_at_ns")
+    rule = decisions[decisions["strategy_name"] == "paper_gettoplive_kill_mom_favorite_hold_v1"].sort_values("received_at_ns")
 
     assert rule["signal"].tolist() == [False, True]
     assert rule.iloc[1]["strategy_name"] == "paper_gettoplive_kill_mom_favorite_hold_v1"
@@ -456,3 +457,81 @@ def _side_row(
         }
     )
     return row
+
+def test_benchmark_confirm_uses_prior_persisted_signals(tmp_path: Path, monkeypatch):
+    from dota2bot.paper_strategy_logger import PaperModelBundle, score_paper_decisions, PaperModelSpec, PAPER_MODEL_SPECS
+    bundle = PaperModelBundle(
+        models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
+        specs=PAPER_MODEL_SPECS,
+        training_cutoff="2026-06-24T00:00:00+00:00",
+    )
+    
+    # The candidate needs momentum. Supply two rows.
+    first = _side_row(received_at_ns=900, game_time_sec=800, ask=0.60, radiant_score=10, dire_score=10)
+    first["canonical_exposure_id"] = "m1::1::YES"
+    candidate = _side_row(received_at_ns=1000, game_time_sec=900, ask=0.60, radiant_score=12, dire_score=10)
+    candidate["canonical_exposure_id"] = "m1::1::YES"
+    
+    # We supply a prior benchmark signal at received_at_ns = 900 (valid because within 300s).
+    prior = pd.DataFrame([{
+        "canonical_exposure_id": "m1::1::YES",
+        "received_at_ns": 900
+    }])
+    
+    decisions = score_paper_decisions(pd.DataFrame([first, candidate]), bundle, prior_benchmark_signals=prior)
+    rule = decisions[decisions["strategy_name"] == "paper_gettoplive_kill_mom_benchmark_confirm_shadow_v1"].sort_values("received_at_ns")
+    print(rule.iloc[1].to_dict())
+    assert rule["signal"].tolist() == [False, True]
+
+
+def test_benchmark_confirm_does_not_use_future_signal(tmp_path: Path, monkeypatch):
+    from dota2bot.paper_strategy_logger import PaperModelBundle, score_paper_decisions, PaperModelSpec, PAPER_MODEL_SPECS
+    bundle = PaperModelBundle(
+        models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
+        specs=PAPER_MODEL_SPECS,
+        training_cutoff="2026-06-24T00:00:00+00:00",
+    )
+    
+    # The candidate needs momentum. Supply two rows.
+    first = _side_row(received_at_ns=900, game_time_sec=800, ask=0.60, radiant_score=10, dire_score=10)
+    first["canonical_exposure_id"] = "m1::1::YES"
+    candidate = _side_row(received_at_ns=1000, game_time_sec=900, ask=0.60, radiant_score=12, dire_score=10)
+    candidate["canonical_exposure_id"] = "m1::1::YES"
+    
+    # Future signal at 1001. Should be invalid.
+    prior = pd.DataFrame([{
+        "canonical_exposure_id": "m1::1::YES",
+        "received_at_ns": 1001
+    }])
+    
+    decisions = score_paper_decisions(pd.DataFrame([first, candidate]), bundle, prior_benchmark_signals=prior)
+    rule = decisions[decisions["strategy_name"] == "paper_gettoplive_kill_mom_benchmark_confirm_shadow_v1"].sort_values("received_at_ns")
+    assert rule["signal"].tolist() == [False, False]
+
+
+def test_benchmark_confirm_uses_canonical_exposure_id_not_map_exposure_id(tmp_path: Path, monkeypatch):
+    from dota2bot.paper_strategy_logger import PaperModelBundle, score_paper_decisions, PaperModelSpec, PAPER_MODEL_SPECS
+    bundle = PaperModelBundle(
+        models={spec.model_name: (FixedProbModel(0.75), ["book_best_ask"]) for spec in PAPER_MODEL_SPECS},
+        specs=PAPER_MODEL_SPECS,
+        training_cutoff="2026-06-24T00:00:00+00:00",
+    )
+    
+    # The candidate needs momentum. Supply two rows.
+    first = _side_row(received_at_ns=900, game_time_sec=800, ask=0.60, radiant_score=10, dire_score=10)
+    first["canonical_exposure_id"] = "m1::1::YES"
+    first["map_exposure_id"] = "different::1"
+    
+    candidate = _side_row(received_at_ns=1000, game_time_sec=900, ask=0.60, radiant_score=12, dire_score=10)
+    candidate["canonical_exposure_id"] = "m1::1::YES"
+    # Set map_exposure_id to something DIFFERENT. If logic uses map_exposure_id, it will fail to match.
+    candidate["map_exposure_id"] = "different::1"
+    
+    prior = pd.DataFrame([{
+        "canonical_exposure_id": "m1::1::YES",
+        "received_at_ns": 900
+    }])
+    
+    decisions = score_paper_decisions(pd.DataFrame([first, candidate]), bundle, prior_benchmark_signals=prior)
+    rule = decisions[decisions["strategy_name"] == "paper_gettoplive_kill_mom_benchmark_confirm_shadow_v1"].sort_values("received_at_ns")
+    assert rule["signal"].tolist() == [False, True]

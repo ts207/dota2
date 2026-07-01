@@ -258,6 +258,7 @@ def score_paper_decisions(
     bundle: PaperModelBundle,
     *,
     eligibility_mode: str = DEFAULT_ELIGIBILITY_MODE,
+    prior_benchmark_signals: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Score side snapshots for all configured paper candidates."""
     if frame.empty:
@@ -279,7 +280,7 @@ def score_paper_decisions(
         for row in scored.to_dict(orient="records"):
             decisions.append(_decision_row(row, spec, bundle))
     for spec in PAPER_RULE_MODEL_SPECS:
-        scored = add_rule_scores(featured.copy(), spec, decisions)
+        scored = add_rule_scores(featured.copy(), spec, decisions, prior_benchmark_signals)
         scored["strategy_filter"] = strategy_filter_mask(scored, spec)
         scored["signal"] = scored["tradable_paper"] & scored["strategy_filter"] & (scored["edge"] >= spec.entry_threshold)
         scored["reason"] = scored.apply(lambda row: _decision_reason(row, spec.entry_threshold), axis=1)
@@ -295,7 +296,12 @@ def score_paper_decisions(
     return out[DECISION_COLUMNS]
 
 
-def add_rule_scores(frame: pd.DataFrame, spec: PaperModelSpec, decisions: list[dict[str, Any]] | None = None) -> pd.DataFrame:
+def add_rule_scores(
+    frame: pd.DataFrame, 
+    spec: PaperModelSpec, 
+    decisions: list[dict[str, Any]] | None = None,
+    prior_benchmark_signals: pd.DataFrame | None = None
+) -> pd.DataFrame:
     if spec.score_kind != "rule_binary":
         raise ValueError(f"unknown deterministic rule score_kind={spec.score_kind!r}")
     scored = frame.copy()
@@ -310,25 +316,32 @@ def add_rule_scores(frame: pd.DataFrame, spec: PaperModelSpec, decisions: list[d
             bench_sigs = [d for d in decisions if d["candidate_group"] == "benchmark" and d["signal"]]
             if bench_sigs:
                 bench_df = pd.DataFrame(bench_sigs)
-                bench_df["entry_received_at_ns"] = pd.to_numeric(bench_df["entry_received_at_ns"])
+                bench_df["received_at_ns"] = pd.to_numeric(bench_df["received_at_ns"])
+            else:
+                bench_df = pd.DataFrame(columns=["canonical_exposure_id", "received_at_ns"])
+        else:
+            bench_df = pd.DataFrame(columns=["canonical_exposure_id", "received_at_ns"])
+
+        if prior_benchmark_signals is not None and not prior_benchmark_signals.empty:
+            if "received_at_ns" in prior_benchmark_signals.columns:
+                prior_benchmark_signals["received_at_ns"] = pd.to_numeric(prior_benchmark_signals["received_at_ns"])
+            bench_df = pd.concat([bench_df, prior_benchmark_signals], ignore_index=True)
+
+        if not bench_df.empty:
+            scored_times = pd.to_numeric(scored["received_at_ns"], errors="coerce")
+            for idx in scored.index:
+                if not rule_mask.loc[idx]:
+                    continue
+                r_map = scored.loc[idx, "canonical_exposure_id"]
+                r_time = scored_times.loc[idx]
                 
-                scored_times = pd.to_numeric(scored["received_at_ns"], errors="coerce")
-                for idx in scored.index:
-                    if not rule_mask.loc[idx]:
-                        continue
-                    r_map = scored.loc[idx, "map_exposure_id"]
-                    r_side = scored.loc[idx, "side"]
-                    r_time = scored_times.loc[idx]
-                    
-                    # check if any benchmark signal matches
-                    valid = bench_df[
-                        (bench_df["map_exposure_id"] == r_map) &
-                        (bench_df["side"] == r_side) &
-                        (bench_df["entry_received_at_ns"] <= r_time) &
-                        (bench_df["entry_received_at_ns"] >= r_time - 300 * 1e9)
-                    ]
-                    if not valid.empty:
-                        confirm_mask.loc[idx] = True
+                valid = bench_df[
+                    (bench_df["canonical_exposure_id"] == r_map) &
+                    (bench_df["received_at_ns"] <= r_time) &
+                    (bench_df["received_at_ns"] >= r_time - 300 * 1e9)
+                ]
+                if not valid.empty:
+                    confirm_mask.loc[idx] = True
         rule_mask = rule_mask & confirm_mask
 
     scored["fair_prob"] = np.nan
@@ -452,7 +465,31 @@ def run_paper_log(
         }
 
     bundle = load_paper_model_bundle(artifact_dir=artifact_dir)
-    decisions = score_paper_decisions(frame, bundle, eligibility_mode=eligibility_mode)
+    
+    prior_benchmark_signals = None
+    if not frame.empty and "received_at_ns" in frame.columns:
+        min_frame_ns = pd.to_numeric(frame["received_at_ns"], errors="coerce").min()
+        max_frame_ns = pd.to_numeric(frame["received_at_ns"], errors="coerce").max()
+        if not pd.isna(min_frame_ns) and not pd.isna(max_frame_ns):
+            start_ns = int(min_frame_ns) - 600 * 10**9
+            end_ns = int(max_frame_ns)
+            ledger_dir = logs_root / output_name
+            if ledger_dir.exists():
+                import duckdb
+                try:
+                    query = f"""
+                        SELECT canonical_exposure_id, received_at_ns 
+                        FROM read_parquet('{ledger_dir}/*.parquet')
+                        WHERE candidate_group = 'benchmark'
+                        AND signal = true
+                        AND CAST(received_at_ns AS BIGINT) >= {start_ns}
+                        AND CAST(received_at_ns AS BIGINT) <= {end_ns}
+                    """
+                    prior_benchmark_signals = duckdb.query(query).df()
+                except Exception:
+                    pass
+
+    decisions = score_paper_decisions(frame, bundle, eligibility_mode=eligibility_mode, prior_benchmark_signals=prior_benchmark_signals)
     if signals_only:
         decisions = decisions[decisions["signal"].fillna(False).astype(bool)].copy()
 

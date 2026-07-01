@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import pytest
+from pathlib import Path
 from dota2bot.paper_sizing_report import run_sizing_report
 
 def mock_positions():
@@ -10,7 +11,7 @@ def mock_positions():
             "candidate_group": "primary",
             "strategy_name": "strat_1",
             "match_id": "match_1",
-            "map_exposure_id": "m1",
+            "blocked_reason": None, "map_exposure_id": "m1",
             "entry_received_at_ns": 1000,
             "entry_ask": 0.50,
             "edge": 0.05,
@@ -26,7 +27,7 @@ def mock_positions():
             "candidate_group": "gettoplive_candidate",
             "strategy_name": "strat_2",
             "match_id": "match_1",
-            "map_exposure_id": "m1",
+            "blocked_reason": None, "map_exposure_id": "m1",
             "entry_received_at_ns": 2000,
             "entry_ask": 0.50,
             "edge": 0.15,
@@ -42,7 +43,7 @@ def mock_positions():
             "candidate_group": "primary",
             "strategy_name": "strat_1",
             "match_id": "match_1",
-            "map_exposure_id": "m1",
+            "blocked_reason": None, "map_exposure_id": "m1",
             "entry_received_at_ns": 3000,
             "entry_ask": 0.50,
             "edge": 0.10,
@@ -58,7 +59,7 @@ def mock_positions():
             "candidate_group": "benchmark",
             "strategy_name": "strat_3",
             "match_id": "match_2",
-            "map_exposure_id": "m2",
+            "blocked_reason": None, "map_exposure_id": "m2",
             "entry_received_at_ns": 4000,
             "entry_ask": 0.50,
             "edge": 0.05,
@@ -74,7 +75,7 @@ def mock_positions():
             "candidate_group": "control",
             "strategy_name": "strat_4",
             "match_id": "match_3",
-            "map_exposure_id": "m3",
+            "blocked_reason": None, "map_exposure_id": "m3",
             "entry_received_at_ns": 5000,
             "entry_ask": 0.50,
             "edge": 0.05,
@@ -90,7 +91,7 @@ def mock_positions():
             "candidate_group": "primary",
             "strategy_name": "strat_1",
             "match_id": "match_4",
-            "map_exposure_id": "m4",
+            "blocked_reason": None, "map_exposure_id": "m4",
             "entry_received_at_ns": 6000,
             "entry_ask": 0.50,
             "edge": 0.05,
@@ -202,3 +203,31 @@ def test_source_all_non_control(monkeypatch, capsys):
     assert "4" in es_df["position_id"].values # benchmark is included
     assert "5" not in es_df["position_id"].values # control is still excluded
     assert "benchmark included in source" in out
+
+def test_paper_sizing_report_strategy_name_filter_isolates_ask65_shadow(tmp_path: Path):
+    from dota2bot.paper_sizing_report import run_sizing_report
+    
+    frame = pd.DataFrame([
+        {"position_id": "1", "strategy_name": "paper_gettoplive_kill_mom_favorite_hold_v1", "candidate_group": "gettoplive_candidate", "settled_win": True, "entry_ask": 0.5, "book_ask_size_log": 2, "sim_pnl_2c": 0.5, "sim_stake": 1, "blocked_reason": None, "map_exposure_id": "1", "pnl_per_share_2c": 0.5, "entry_received_at_ns": 1000, "sim_shares": 1, "liquidity_unknown": False, "liq_capped": False, "match_id": "m1"},
+        {"position_id": "2", "strategy_name": "paper_gettoplive_kill_mom_favorite_ask65_gt600_shadow_v1", "candidate_group": "gettoplive_candidate", "settled_win": True, "entry_ask": 0.5, "book_ask_size_log": 2, "sim_pnl_2c": 0.3, "sim_stake": 1, "blocked_reason": None, "map_exposure_id": "2", "pnl_per_share_2c": 0.3, "entry_received_at_ns": 1000, "sim_shares": 1, "liquidity_unknown": False, "liq_capped": False, "match_id": "m1"},
+    ])
+    
+    input_dir = tmp_path / "paper_positions"
+    input_dir.mkdir()
+    frame.to_parquet(input_dir / "latest.parquet", index=False)
+    
+    import io
+    import sys
+    captured = io.StringIO()
+    sys.stdout = captured
+    run_sizing_report(
+        logs_root=tmp_path,
+        input_name="paper_positions",
+        source="gettoplive",
+        strategy_name="paper_gettoplive_kill_mom_favorite_ask65_gt600_shadow_v1"
+    )
+    sys.stdout = sys.__stdout__
+    output = captured.getvalue()
+    print("OUTPUT IS:", output)
+    assert "Strategy: paper_gettoplive_kill_mom_favorite_ask65_gt600_shadow_v1" in output
+    assert "| 1 " in output

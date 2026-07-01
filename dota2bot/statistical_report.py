@@ -34,12 +34,19 @@ def run_statistical_report_for_sizing(
     source: str,
     sizing: str,
     bootstrap_samples: int,
-    seed: int
+    seed: int,
+    strategy_name: str | None = None
 ) -> dict:
     allowed = frame[frame["blocked_reason"].isna()].copy()
     
     if allowed.empty:
         return {"error": "No allowed positions."}
+    
+    if strategy_name is not None:
+        if "strategy_name" in allowed.columns:
+            allowed = allowed[allowed["strategy_name"] == strategy_name]
+        if allowed.empty:
+            return {"error": f"No allowed positions after filtering for strategy_name={strategy_name}."}
 
     # Filter source
     if source == "active":
@@ -181,6 +188,7 @@ def run_statistical_report_for_sizing(
 
     return {
         "source": source,
+        "strategy_name": strategy_name,
         "sizing": sizing,
         "core_metrics": core_metrics,
         "boot_metrics": boot_metrics,
@@ -197,6 +205,7 @@ def run_statistical_report(
     bootstrap_samples: int = 5000,
     seed: int = 42,
     output_format: str = "markdown",
+    strategy_name: str | None = None,
 ) -> None:
     input_dir = logs_root / input_name
     if not input_dir.exists():
@@ -229,7 +238,8 @@ def run_statistical_report(
             source=source,
             sizing=scheme,
             bootstrap_samples=bootstrap_samples,
-            seed=seed
+            seed=seed,
+            strategy_name=strategy_name
         )
         all_results.append(res)
         
@@ -241,7 +251,10 @@ def run_statistical_report(
                 print(f"Error for sizing {res.get('sizing', 'unknown')}: {res['error']}")
                 continue
                 
-            print(f"# Statistical Report (source={res['source']}, sizing={res['sizing']})\n")
+            if res.get('strategy_name'):
+                print(f"# Statistical Report (source={res['source']}, strategy_name={res['strategy_name']}, sizing={res['sizing']})\n")
+            else:
+                print(f"# Statistical Report (source={res['source']}, sizing={res['sizing']})\n")
             
             print("## Core Metrics\n")
             _print_table(pd.DataFrame(res["core_metrics"]))
@@ -268,6 +281,7 @@ def add_statistical_report_args(parser: argparse.ArgumentParser) -> None:
         "flat_1", "flat_5", "kill_mom_scaled", "edge_scaled", 
         "conservative_group_default", "group_specific_default", "all"
     ])
+    parser.add_argument("--strategy-name", type=str, default=None, help="Filter to a specific strategy_name")
     parser.add_argument("--bootstrap-samples", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--format", type=str, default="markdown", choices=["markdown", "json"])
@@ -284,6 +298,7 @@ def main() -> None:
         bootstrap_samples=args.bootstrap_samples,
         seed=args.seed,
         output_format=args.format,
+        strategy_name=args.strategy_name,
     )
 
 if __name__ == "__main__":

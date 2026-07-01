@@ -13,7 +13,7 @@ def _print_table(df: pd.DataFrame) -> None:
         print(f"| {' | '.join(str(x) for x in row)} |")
     print()
 
-def run_position_report(*, logs_root: Path = Path("logs"), input_name: str = "paper_positions") -> None:
+def run_position_report(*, logs_root: Path = Path("logs"), input_name: str = "paper_positions", strategy_name: str | None = None) -> None:
     input_dir = logs_root / input_name
     if not input_dir.exists():
         print(f"Directory {input_dir} not found.")
@@ -24,12 +24,22 @@ def run_position_report(*, logs_root: Path = Path("logs"), input_name: str = "pa
         print("No positions found.")
         return
 
+    if strategy_name is not None:
+        if "strategy_name" in frame.columns:
+            frame = frame[frame["strategy_name"] == strategy_name]
+        if frame.empty:
+            print(f"No positions found after filtering for strategy_name={strategy_name}.")
+            return
+
     allowed = frame[frame["blocked_reason"].isna()].copy()
     blocked = frame[~frame["blocked_reason"].isna()].copy()
     settled = allowed[allowed["settled_win"].notna()].copy()
     pending = allowed[allowed["settled_win"].isna()].copy()
 
-    print("# Position Report\n")
+    if strategy_name:
+        print(f"# Position Report (strategy_name={strategy_name})\n")
+    else:
+        print("# Position Report\n")
     print(f"- total position records: {len(frame)}")
     print(f"- allowed positions: {len(allowed)}")
     print(f"- blocked decisions: {len(blocked)}")
@@ -79,6 +89,7 @@ def run_position_report(*, logs_root: Path = Path("logs"), input_name: str = "pa
 def add_position_report_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--logs-root", type=Path, default=Path("logs"))
     parser.add_argument("--input-name", type=str, default="paper_positions")
+    parser.add_argument("--strategy-name", type=str, default=None, help="Filter to a specific strategy_name")
 
 def main() -> None:
     parser = argparse.ArgumentParser()
@@ -88,6 +99,7 @@ def main() -> None:
     run_position_report(
         logs_root=args.logs_root,
         input_name=args.input_name,
+        strategy_name=args.strategy_name,
     )
 
 if __name__ == "__main__":

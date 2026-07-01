@@ -144,6 +144,7 @@ def _entry_row(*, settled_win: bool = False) -> dict:
             "side_mom_100": 1000,
             "signal": True,
             "settled_win": settled_win,
+            "blocked_reason": None,
         }
     )
     return row
